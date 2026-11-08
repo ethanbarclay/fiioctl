@@ -833,6 +833,10 @@ def main(argv=None):
     except FiioError as exc:
         emit({"error": str(exc)}, args.json, f"error: {exc}")
         return EXIT_DEVICE
+    except (ValueError, TypeError) as exc:
+        # a CLI should never hand a user a traceback for bad input
+        emit({"error": str(exc)}, args.json, f"error: {exc}")
+        return EXIT_DATA
     except KeyboardInterrupt:
         return 130
 

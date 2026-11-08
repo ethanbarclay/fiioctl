@@ -21,6 +21,22 @@ class FiioError(RuntimeError):
     """Any failure talking to the device."""
 
 
+#: codecs that encode a whole number. A fractional value would reach `int()`
+#: inside the encoder and raise a bare ValueError, or silently truncate.
+INTEGER_CODECS = ("u8", "u16", "balance")
+
+
+def _integral(name, value):
+    """Require a whole number, so bad input fails as a FiioError not a traceback."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise FiioError(f"{name} must be a whole number; got {value!r}") from None
+    if number != int(number):
+        raise FiioError(f"{name} must be a whole number; got {value!r}")
+    return int(number)
+
+
 def _hid():
     if hid is None:
         raise FiioError("the 'hid' package is not installed: pip install hid")
@@ -251,6 +267,9 @@ class Dac:
 
         if name == "eq-gain":
             return self.snap_gain(value)
+
+        if cmd.codec in INTEGER_CODECS:
+            value = _integral(name, value)
 
         if cmd.rng is not None and cmd.codec != "bool":
             lo, hi = cmd.rng
