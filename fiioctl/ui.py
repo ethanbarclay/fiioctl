@@ -543,6 +543,10 @@ class FiioApp(App):
         if band == before:
             return
         self.undo_stack.append((f"band {index} {field}", ("band", index, before)))
+        self._commit_band(index, band)
+
+    def _commit_band(self, index, band):
+        """Adopt a band locally, repaint from it, then write it to the device."""
         self.bands[index] = band
         self.repaint()
         self.push_band(band)
@@ -581,9 +585,7 @@ class FiioApp(App):
             self.push_setting(name, value)
         else:
             _, index, band = entry
-            self.bands[index] = band
-            self.repaint()
-            self.push_band(band)
+            self._commit_band(index, band)
         self._status(f"undid {label}")
 
     # -- slots --------------------------------------------------------------
@@ -686,11 +688,15 @@ class FiioApp(App):
         self.action_page("lib")
         self.query_one("#search", Input).focus()
 
+    def _close_rename(self):
+        """Hide the rename box and hand focus back to the slot list."""
+        self.renaming = False
+        self.query_one("#rename", Input).styles.display = "none"
+        self.query_one("#slots", DataTable).focus()
+
     def action_cancel(self):
         if self.renaming:
-            self.renaming = False
-            self.query_one("#rename", Input).styles.display = "none"
-            self.query_one("#slots", DataTable).focus()
+            self._close_rename()
             self._refresh_hint()
 
     def on_input_submitted(self, event: Input.Submitted):
@@ -701,9 +707,7 @@ class FiioApp(App):
                 self.run_search(query)
         elif event.input.id == "rename":
             picked = self._selected_slot()
-            self.renaming = False
-            self.query_one("#rename", Input).styles.display = "none"
-            self.query_one("#slots", DataTable).focus()
+            self._close_rename()
             if picked and event.value.strip():
                 self.push_name(picked[0], event.value.strip())
 
