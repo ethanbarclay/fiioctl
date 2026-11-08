@@ -48,7 +48,7 @@ Protocol = "https://github.com/ethanbarclay/fiioctl/blob/main/docs/PROTOCOL.md"
 ui = ["textual>=8.0"]
 cloud = ["cryptography>=44"]
 all = ["textual>=8.0", "cryptography>=44"]
-dev = ["pytest>=9", "pytest-asyncio>=1.4", "textual>=8.0", "cryptography>=44"]
+dev = ["pytest>=9", "pytest-asyncio>=1.4", "pytest-cov>=7", "textual>=8.0", "cryptography>=44"]
 
 [project.scripts]
 fiioctl = "fiioctl.cli:main"
