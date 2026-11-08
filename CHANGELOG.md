@@ -25,20 +25,21 @@ to check it with.
   language and screen brightness.
 - **Curve preview.** RBJ biquad magnitude response plotted in the terminal, so a
   profile can be judged before it is written to the device.
-- **AutoEq search.** Index download with a 14-day cache, punctuation-insensitive
+- **AutoEq search.** Index download with a 30-day cache, punctuation-insensitive
   matching, profile parsing, and `autoeq refresh`.
 - **FiiO catalogue.** The encrypted `/ucenter-api` envelope, preset and
   measurement search, target lists and compatibility, and server-side AutoEq.
-  Reads work without an account; publishing presets is deliberately not
-  implemented.
+  The two indexes are cached for 14 days and curves are fetched lazily. Reads
+  work without an account; publishing presets is deliberately not implemented.
 - **Terminal UI** (`fiioctl ui`, `ui` extra): four pages covering the live EQ
   with curve, the slot manager, headphone search with measurement previews, and
   onboard settings.
 - **Scripting surface.** `--json` on every command, stable exit codes,
   `fiioctl schema` dumping the whole model as one document, and `fiioctl batch`
   for many operations in a row.
-- **Device profiles.** Twenty-one models, of which the KA15 is hardware-verified;
-  `fiioctl scan` and the device-report issue template exist to grow that list.
+- **Device profiles.** Twenty-one models, of which the KA15 is
+  hardware-verified; `fiioctl scan` and the device-report issue template exist
+  to grow that list.
 - **Linux packaging.** A udev rule in `packaging/` so the device is reachable
   without root.
 

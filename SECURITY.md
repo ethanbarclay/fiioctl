@@ -42,8 +42,10 @@ the key RSA-wrapped, and rejects anything else. Switching mode means losing
 catalogue search entirely.
 
 Three things bound what that costs. HTTPS carries the real confidentiality. The
-key is sixteen fresh random bytes per request, so nothing is reused across
-messages. And the plaintext is a public catalogue query, so the block-equality
-that ECB leaks reveals only that a headphone search looks like a headphone
-search. Reports of this alert will be closed with a link here; a report showing
-a concrete attack on it is very welcome and would change this answer.
+key is fresh per request: sixteen random bytes, hex-encoded to the 32-byte
+string FiiO's scheme uses as the AES-256 key, so 128 bits of entropy and no
+reuse across messages. And the plaintext is a public catalogue query, so the
+block-equality that ECB leaks reveals only that a headphone search looks like a
+headphone search. Reports of this alert will be closed with a link here; a
+report showing a concrete attack on it is very welcome and would change this
+answer.
