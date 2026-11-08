@@ -11,7 +11,7 @@ import json
 import os
 import sys
 
-from . import eqdb, proto, registry
+from . import curve, eqdb, proto, registry
 from .device import Dac, FiioError, candidates
 
 EXIT_OK, EXIT_USAGE, EXIT_DEVICE, EXIT_DATA = 0, 2, 3, 4
@@ -38,6 +38,32 @@ def shown(name, value):
     """Render a value for people: `english`, not `1`."""
     text = registry.label(name, value)
     return text if text is not None else value
+
+
+def labelled(name, value, **extra):
+    """A result dict carrying the raw value plus its name, when it has one.
+
+    Machines compare the number; people read the label. Both commands that write
+    or read a single setting need exactly this.
+    """
+    out = {name: value, **extra}
+    text = registry.label(name, value)
+    if text is not None:
+        out["label"] = text
+    return out
+
+
+def data_errors():
+    """Exception types that mean "bad or unreachable data", for main() to report.
+
+    Built lazily because `cloud` needs an optional dependency, and importing it
+    at module scope would make the whole CLI require `cryptography`.
+    """
+    try:
+        from .cloud import CloudError
+    except ImportError:
+        return (ValueError, TypeError)
+    return (CloudError, ValueError, TypeError)
 
 
 def connect(args):
@@ -123,11 +149,8 @@ def cmd_state(args):
 def cmd_get(args):
     with connect(args) as dac:
         value = dac.get(args.name)
-    out = {args.name: value}
-    text = registry.label(args.name, value)
-    if text is not None:
-        out["label"] = text
-    emit(out, args.json, None if args.json else str(shown(args.name, value)))
+    emit(labelled(args.name, value), args.json,
+         None if args.json else str(shown(args.name, value)))
     return EXIT_OK
 
 
@@ -136,11 +159,8 @@ def cmd_set(args):
         # read back by default: the firmware accepts a write silently even when
         # it ignores or clamps the value
         value = dac.set(args.name, args.value, verify=not args.no_verify)
-    out = {args.name: value, "written": True}
-    text = registry.label(args.name, value)
-    if text is not None:
-        out["label"] = text
-    emit(out, args.json, f"{args.name} = {shown(args.name, value)}")
+    emit(labelled(args.name, value, written=True), args.json,
+         f"{args.name} = {shown(args.name, value)}")
     return EXIT_OK
 
 
@@ -414,6 +434,19 @@ def cmd_raw(args):
     return EXIT_OK
 
 
+def print_profile(profile):
+    """Human-readable dump of a profile: heading, curve, then the bands."""
+    print(f"{profile['name']}  [{profile['source']}]")
+    if profile.get("description"):
+        print(f"  {profile['description']}")
+    print(f"  preamp {profile['preamp']:+.1f} dB")
+    for line in curve.plot(profile["bands"], height=9, width=52):
+        print(line)
+    for band in profile["bands"]:
+        print(f"   {band['freq']:>6} Hz  {band['gain']:+6.1f} dB  "
+              f"Q {band['q']:>5.2f}  {band['filter']}")
+
+
 def _cloud_presets(args, dac):
     from . import cloud
     if not dac.spec.cloud_id:
@@ -424,13 +457,8 @@ def _cloud_presets(args, dac):
 
 
 def cmd_cloud_list(args):
-    from .cloud import CloudError
     with connect(args) as dac:
-        try:
-            found = _cloud_presets(args, dac)
-        except CloudError as exc:
-            emit({"error": str(exc)}, args.json, f"error: {exc}")
-            return EXIT_DATA
+        found = _cloud_presets(args, dac)
     if args.json:
         emit([{k: v for k, v in p.items() if k != "bands"} | {"bands": len(p["bands"])}
               for p in found], True)
@@ -443,14 +471,8 @@ def cmd_cloud_list(args):
 
 
 def cmd_cloud_show(args):
-    from . import curve
-    from .cloud import CloudError
     with connect(args) as dac:
-        try:
-            found = _cloud_presets(args, dac)
-        except CloudError as exc:
-            emit({"error": str(exc)}, args.json, f"error: {exc}")
-            return EXIT_DATA
+        found = _cloud_presets(args, dac)
     if not 0 <= args.index < len(found):
         emit({"error": "index out of range"}, args.json, "index out of range")
         return EXIT_USAGE
@@ -458,25 +480,13 @@ def cmd_cloud_show(args):
     if args.json:
         emit(preset, True)
         return EXIT_OK
-    print(f"{preset['name']}  [{preset['source']}]")
-    if preset["description"]:
-        print(f"  {preset['description']}")
-    print(f"  preamp {preset['preamp']:+.1f} dB")
-    for line in curve.plot(preset["bands"], height=9, width=52):
-        print(line)
-    for b in preset["bands"]:
-        print(f"   {b['freq']:>6} Hz  {b['gain']:+6.1f} dB  Q {b['q']:>5.2f}  {b['filter']}")
+    print_profile(preset)
     return EXIT_OK
 
 
 def cmd_cloud_apply(args):
-    from .cloud import CloudError
     with connect(args) as dac:
-        try:
-            found = _cloud_presets(args, dac)
-        except CloudError as exc:
-            emit({"error": str(exc)}, args.json, f"error: {exc}")
-            return EXIT_DATA
+        found = _cloud_presets(args, dac)
         if not 0 <= args.index < len(found):
             emit({"error": "index out of range"}, args.json, "index out of range")
             return EXIT_USAGE
@@ -489,24 +499,16 @@ def cmd_cloud_apply(args):
 
 
 def cmd_autoeq_refresh(args):
-    from .cloud import CloudError, refresh_indexes
-    try:
-        counts = refresh_indexes()
-    except CloudError as exc:
-        emit({"error": str(exc)}, args.json, f"error: {exc}")
-        return EXIT_DATA
+    from .cloud import refresh_indexes
+    counts = refresh_indexes()
     emit(counts, args.json,
          f"refreshed: {counts['measurements']} measurements, {counts['targets']} targets")
     return EXIT_OK
 
 
 def cmd_autoeq_search(args):
-    from .cloud import CloudError, find_measurements
-    try:
-        rows = find_measurements(args.query, limit=args.limit)
-    except CloudError as exc:
-        emit({"error": str(exc)}, args.json, f"error: {exc}")
-        return EXIT_DATA
+    from .cloud import find_measurements
+    rows = find_measurements(args.query, limit=args.limit)
     if not rows:
         emit([], args.json, "no match")
         return EXIT_DATA
@@ -521,12 +523,8 @@ def cmd_autoeq_search(args):
 
 
 def cmd_autoeq_targets(args):
-    from .cloud import CloudError, target_list
-    try:
-        rows = target_list()
-    except CloudError as exc:
-        emit({"error": str(exc)}, args.json, f"error: {exc}")
-        return EXIT_DATA
+    from .cloud import target_list
+    rows = target_list()
     if args.query:
         needle = args.query.lower()
         rows = [r for r in rows if needle in (r.get("label") or "").lower()]
@@ -545,34 +543,17 @@ def _autoeq_profile(args, bands):
 
 
 def cmd_autoeq_show(args):
-    from . import curve
-    from .cloud import CloudError
-    try:
-        profile = _autoeq_profile(args, args.bands)
-    except CloudError as exc:
-        emit({"error": str(exc)}, args.json, f"error: {exc}")
-        return EXIT_DATA
+    profile = _autoeq_profile(args, args.bands)
     if args.json:
         emit(profile, True)
         return EXIT_OK
-    print(f"{profile['name']}  [{profile['source']}]")
-    print(f"  target: {profile['target_label']}  (id {profile['target_id']})")
-    print(f"  preamp {profile['preamp']:+.1f} dB")
-    for line in curve.plot(profile["bands"], height=9, width=52):
-        print(line)
-    for b in profile["bands"]:
-        print(f"   {b['freq']:>6} Hz  {b['gain']:+6.1f} dB  Q {b['q']:>5.2f}  {b['filter']}")
+    print_profile(profile)
     return EXIT_OK
 
 
 def cmd_autoeq_apply(args):
-    from .cloud import CloudError
     with connect(args) as dac:
-        try:
-            profile = _autoeq_profile(args, dac.band_count())
-        except CloudError as exc:
-            emit({"error": str(exc)}, args.json, f"error: {exc}")
-            return EXIT_DATA
+        profile = _autoeq_profile(args, dac.band_count())
         out = {"profile": profile["name"], "target": profile["target_label"],
                **_apply_profile(dac, profile, args)}
     emit(out, args.json, f"applied '{profile['name']}' to {out['applied']} bands "
@@ -838,8 +819,9 @@ def main(argv=None):
     except FiioError as exc:
         emit({"error": str(exc)}, args.json, f"error: {exc}")
         return EXIT_DEVICE
-    except (ValueError, TypeError) as exc:
-        # a CLI should never hand a user a traceback for bad input
+    except data_errors() as exc:
+        # catalogue failures and bad input report the same way, so no subcommand
+        # needs its own try/except; a CLI should never show a traceback either
         emit({"error": str(exc)}, args.json, f"error: {exc}")
         return EXIT_DATA
     except KeyboardInterrupt:
