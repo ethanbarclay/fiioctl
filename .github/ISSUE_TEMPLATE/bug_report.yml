@@ -1,0 +1,74 @@
+name: Bug report
+description: Something does not work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Almost everything in this project is device-specific, and only the KA15
+        has been verified on hardware. The output of `fiioctl info --json` tells
+        us more than any description can, so please include it.
+
+  - type: textarea
+    id: info
+    attributes:
+      label: Output of `fiioctl info --json`
+      description: >-
+        This gives the model, firmware, matched profile, transport and
+        capabilities in one go. If the command itself is what fails, paste the
+        error instead, plus `fiioctl devices`.
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: fiioctl version
+      description: Output of `fiioctl --version`
+      placeholder: fiioctl 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+      description: The exact command you ran, and its output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: trace
+    attributes:
+      label: Packet trace, if the device is involved
+      description: >-
+        Re-run the command with `--trace` and paste the TX/RX lines. This is the
+        single most useful thing for a protocol bug, since it shows exactly what
+        was sent and what came back.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before filing
+      options:
+        - label: >-
+            On Linux, the udev rule from `packaging/` is installed and the device
+            was re-plugged afterwards
+        - label: >-
+            `fiioctl devices` lists the device (if it does not, that is the bug
+            to report)
