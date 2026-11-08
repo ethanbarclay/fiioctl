@@ -82,6 +82,29 @@ def test_ka15_registry_facts():
     assert "eq-switch" in spec.unsupported
 
 
+def test_scan_never_probes_destructive_commands():
+    """A GET should be harmless, but not if firmware acts on the command byte."""
+    assert set(registry.DESTRUCTIVE) == {25, 27, 33}
+    assert registry.COMMANDS["eq-save"].id in registry.DESTRUCTIVE
+    assert registry.COMMANDS["factory-reset"].id in registry.DESTRUCTIVE
+
+
+def test_diff_scans_reports_only_changes():
+    from fiioctl.cli import diff_scans
+    before = {"3": "00", "5": "01", "14": "05"}
+    after = {"3": "00", "5": "02", "32": "01"}
+    assert diff_scans(before, after) == [
+        (5, "01", "02"),       # changed
+        (14, "05", None),      # went silent
+        (32, None, "01"),      # newly answering
+    ]
+
+
+def test_diff_scans_is_empty_when_nothing_moved():
+    from fiioctl.cli import diff_scans
+    assert diff_scans({"3": "00"}, {"3": "00"}) == []
+
+
 def test_name_decode_stops_at_stale_bytes():
     """Observed on a KA15: the 8-byte name field keeps old PEQ bytes after the name."""
     # "M6" followed by 0x2710 (10000 Hz) and 0x0046 (Q 0.70) from an earlier write

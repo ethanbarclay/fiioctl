@@ -234,6 +234,24 @@ class Dac:
             raise FiioError(f"band gain {gain} outside {lo}..{hi} dB")
         self.send(registry.BAND_CMD, proto.enc_band(index, freq, gain, q, filter_type))
 
+    def scan(self, limit=256, timeout=0.25):
+        """Probe the command space read-only; return {cmd: payload}.
+
+        Sends only GET frames, and never touches `registry.DESTRUCTIVE`. Useful
+        for finding settings a device answers for that are not yet decoded - diff
+        two scans either side of changing one setting in the vendor app and the
+        command that moved is that setting.
+        """
+        found = {}
+        for cmd in range(int(limit)):
+            if cmd in registry.DESTRUCTIVE:
+                continue
+            try:
+                found[cmd] = self.request(cmd, timeout=timeout)
+            except FiioError:
+                continue
+        return found
+
     def get_preset_name(self, slot):
         payload = self.request(registry.NAME_CMD, bytes([slot - self.spec.name_offset]))
         return proto.dec_name(payload[1:] if payload else b"")

@@ -76,6 +76,11 @@ BAND_CMD = 21
 #: Preset-name command: payload is [slot, *utf8].
 NAME_CMD = 48
 
+#: Command ids that perform an irreversible action. `fiioctl scan` never probes
+#: these, in case a firmware acts on the command byte without checking whether
+#: the frame was a read or a write.
+DESTRUCTIVE = {25: "save EQ to slot", 27: "unknown action", 33: "factory reset"}
+
 #: Commands observed in the app bundle but with no confirmed semantics. Reachable
 #: through `fiioctl raw`; promote them here as they get identified.
 UNMAPPED = {6: "unknown (get/set, 1 byte)", 27: "unknown action (no payload)",

@@ -8,6 +8,7 @@ what makes the tool scriptable and agent-readable.
 
 import argparse
 import json
+import os
 import sys
 
 from . import eqdb, proto, registry
@@ -280,6 +281,88 @@ def cmd_peq_clear(args):
         for i in range(count):
             dac.set_band(i, 1000, 0.0, 0.7, "peak")
         emit({"flattened": count}, args.json, f"flattened {count} bands")
+    return EXIT_OK
+
+
+def known_command_names():
+    """cmd id -> the name fiioctl knows it by, for annotating a scan."""
+    names = {cmd.id: name for name, cmd in registry.COMMANDS.items()}
+    names[registry.BAND_CMD] = "peq-band"
+    names[registry.NAME_CMD] = "preset-name"
+    return names
+
+
+def diff_scans(before, after):
+    """Compare two {cmd: hex} snapshots. Returns rows of (cmd, before, after).
+
+    Keys arrive as strings from JSON, so sort them numerically - otherwise
+    command 14 lists before command 3.
+    """
+    def as_int(key):
+        try:
+            return int(key, 0)
+        except (TypeError, ValueError):
+            return 1 << 32
+
+    rows = []
+    for cmd in sorted(set(before) | set(after), key=as_int):
+        was, now = before.get(cmd), after.get(cmd)
+        if was != now:
+            rows.append((as_int(cmd), was, now))
+    return rows
+
+
+def cmd_scan(args):
+    names = known_command_names()
+    if args.diff and not os.path.exists(args.diff):
+        emit({"error": f"no such snapshot: {args.diff}"}, args.json,
+             f"no such snapshot: {args.diff}")
+        return EXIT_USAGE
+    with connect(args) as dac:
+        found = dac.scan(limit=args.max, timeout=args.timeout)
+        product = dac.info.get("product_string")
+    snapshot = {hex(c): p.hex(" ") for c, p in found.items()}
+
+    if args.save:
+        with open(args.save, "w", encoding="utf-8") as fh:
+            json.dump({"product": product, "commands": {str(c): p.hex(" ")
+                                                        for c, p in found.items()}},
+                      fh, indent=2)
+
+    if args.diff:
+        with open(args.diff, encoding="utf-8") as fh:
+            before = json.load(fh).get("commands", {})
+        now = {str(c): p.hex(" ") for c, p in found.items()}
+        rows = diff_scans(before, now)
+        out = [{"cmd": c, "name": names.get(c, ""), "before": b, "after": a}
+               for c, b, a in rows]
+        if args.json:
+            emit(out, True)
+        elif not rows:
+            print("no differences")
+        else:
+            for row in out:
+                print(f"cmd {row['cmd']:>3} ({row['cmd']:#04x})  "
+                      f"{row['before'] or '(silent)'}  ->  {row['after'] or '(silent)'}"
+                      + (f"   {row['name']}" if row["name"] else "   <unknown>"))
+        return EXIT_OK
+
+    if args.json:
+        emit({"product": product, "skipped": registry.DESTRUCTIVE,
+              "commands": [{"cmd": c, "name": names.get(c, ""), "payload": p.hex(" ")}
+                           for c, p in found.items()]}, True)
+        return EXIT_OK
+
+    print(f"{product}: {len(found)} of {args.max} commands answered "
+          f"({len(registry.DESTRUCTIVE)} skipped as destructive)\n")
+    for cmd, payload in found.items():
+        label = names.get(cmd, "<unknown>")
+        print(f"{cmd:>4} {cmd:#04x}  {len(payload):>2}B  {payload.hex(' '):<28} {label}")
+    unknown = [c for c in found if c not in names]
+    print(f"\n{len(unknown)} answered but undecoded: "
+          f"{', '.join(str(c) for c in unknown) or 'none'}")
+    silent = [n for c, n in names.items() if c not in found and c not in registry.DESTRUCTIVE]
+    print(f"{len(silent)} known commands silent on this device: {', '.join(silent) or 'none'}")
     return EXIT_OK
 
 
@@ -683,6 +766,14 @@ def build_parser():
             p2.add_argument("--slot", help="switch to this preset slot first")
             p2.add_argument("--save", action="store_true", help="persist after applying")
         p2.set_defaults(fn=fn)
+
+    sc = sub.add_parser("scan", help="probe the command space read-only, and diff snapshots")
+    sc.add_argument("--max", type=int, default=256, help="highest command id to probe")
+    sc.add_argument("--timeout", type=float, default=0.25, help="seconds to wait per command")
+    sc.add_argument("--save", metavar="FILE", help="write the scan to a snapshot file")
+    sc.add_argument("--diff", metavar="FILE",
+                    help="compare against a snapshot instead of listing everything")
+    sc.set_defaults(fn=cmd_scan)
 
     rw = sub.add_parser("raw", help="send an arbitrary command (escape hatch)")
     rw.add_argument("cmd", type=lambda v: int(v, 0), metavar="CMD")
