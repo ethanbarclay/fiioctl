@@ -195,25 +195,74 @@ class Dac:
         decode = proto.CODECS[cmd.codec][1]
         return decode(self.request(cmd.id, timeout=timeout))
 
-    def set(self, name, value):
+    def _coerce(self, name, cmd, value):
+        """Resolve a value to something the device will actually accept.
+
+        The firmware does not report errors: an out-of-range write is either
+        ignored, leaving the old value, or clamped to a different one. Either way
+        a caller that trusted the request would be told of a change that did not
+        happen. So reject what we know to be invalid before sending it.
+        """
+        if cmd.enum:
+            if str(value) in cmd.enum:
+                return cmd.enum[str(value)]
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                number = None
+            if number is None or number not in cmd.enum.values():
+                options = ", ".join(f"{text} ({num})"
+                                    for text, num in sorted(cmd.enum.items(),
+                                                            key=lambda kv: kv[1]))
+                raise FiioError(f"{name} accepts {options}; got {value!r}")
+            return number
+
+        if name == "eq-preset" and self.spec.presets:
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                raise FiioError(f"eq-preset must be a number or a preset name; "
+                                f"got {value!r}") from None
+            if number not in set(self.spec.presets.values()):
+                valid = ", ".join(f"{k} ({v})" for k, v in
+                                  sorted(self.spec.presets.items(), key=lambda kv: kv[1]))
+                raise FiioError(f"eq-preset {number} is not a slot on this device; "
+                                f"valid: {valid}")
+            return number
+
+        if name == "eq-gain":
+            return self.snap_gain(value)
+
+        if cmd.rng is not None and cmd.codec != "bool":
+            lo, hi = cmd.rng
+            if not lo <= float(value) <= hi:
+                raise FiioError(f"{name}={value} outside {lo}..{hi}")
+        return value
+
+    def set(self, name, value, verify=False):
+        """Write a setting. With `verify`, read it back and return what stuck.
+
+        Verification costs one extra round-trip, so it is off by default for
+        interactive callers that re-read anyway, and on for one-shot CLI writes.
+        """
         cmd = self._cmd(name)
         if not cmd.writable:
             raise FiioError(f"{name} is read-only")
         encode = proto.CODECS[cmd.codec][0]
         if encode is None:
             raise FiioError(f"{name} is read-only")
-        if cmd.enum and str(value) in cmd.enum:
-            value = cmd.enum[str(value)]
-        if name == "eq-gain":
-            value = self.snap_gain(value)
-        if cmd.rng is not None and cmd.codec != "bool":
-            lo, hi = cmd.rng
-            if not lo <= float(value) <= hi:
-                raise FiioError(f"{name}={value} outside {lo}..{hi}")
+
+        value = self._coerce(name, cmd, value)
         payload = encode(value)
         self.send(cmd.id, payload)
         # Report the value as it went over the wire, not as it was typed.
-        return proto.CODECS[cmd.codec][1](payload)
+        sent = proto.CODECS[cmd.codec][1](payload)
+        if not verify or not cmd.readable:
+            return sent
+        actual = self.get(name)
+        if actual != sent:
+            raise FiioError(f"{name}: wrote {sent} but the device holds {actual}")
+        return actual
 
     # -- PEQ ----------------------------------------------------------------
 

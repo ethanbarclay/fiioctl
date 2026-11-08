@@ -82,6 +82,64 @@ def test_ka15_registry_facts():
     assert "eq-switch" in spec.unsupported
 
 
+def _dry(spec=None):
+    """A Dac that builds packets but writes nowhere."""
+    from fiioctl.device import Dac
+    return Dac(None, {"product_string": "FIIO KA15"}, spec or registry.KA15, dry=True)
+
+
+def test_enum_rejects_values_the_firmware_would_ignore():
+    """`set language 2` used to report success while the device kept its value."""
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="chinese"):
+        dac.set("language", 2)
+    with pytest.raises(FiioError):
+        dac.set("language", "klingon")
+
+
+def test_enum_accepts_names_and_valid_numbers():
+    dac = _dry()
+    assert dac.set("language", "english") == 1
+    assert dac.set("language", "chinese") == 0
+    assert dac.set("language", 1) == 1
+    assert dac.set("language", 0) == 0
+
+
+def test_preset_rejects_slots_the_device_does_not_have():
+    """`set eq-preset 99` used to report 99 while the device clamped to 10."""
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="not a slot"):
+        dac.set("eq-preset", 99)
+    assert dac.set("eq-preset", 9) == 9
+
+
+def test_range_still_enforced():
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="outside"):
+        dac.set("brightness", 11)
+    assert dac.set("brightness", 10) == 10
+
+
+def test_verify_reports_what_the_device_actually_holds():
+    """A firmware that clamps must not be reported as having accepted the write."""
+    from fiioctl.device import Dac, FiioError
+
+    class Clamping(Dac):
+        def send(self, cmd, data=b"", hdr=None):
+            pass
+
+        def get(self, name, timeout=None):
+            return 10  # whatever was asked for, the device lands on 10
+
+    dac = Clamping(None, {}, registry.KA15, dry=True)
+    assert dac.set("eq-preset", 10, verify=True) == 10
+    with pytest.raises(FiioError, match="device holds 10"):
+        dac.set("eq-preset", 9, verify=True)
+
+
 def test_scan_never_probes_destructive_commands():
     """A GET should be harmless, but not if firmware acts on the command byte."""
     assert set(registry.DESTRUCTIVE) == {25, 27, 33}

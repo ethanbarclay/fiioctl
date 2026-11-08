@@ -127,7 +127,9 @@ def cmd_get(args):
 
 def cmd_set(args):
     with connect(args) as dac:
-        value = dac.set(args.name, args.value)
+        # read back by default: the firmware accepts a write silently even when
+        # it ignores or clamps the value
+        value = dac.set(args.name, args.value, verify=not args.no_verify)
     out = {args.name: value, "written": True}
     text = registry.label(args.name, value)
     if text is not None:
@@ -695,6 +697,8 @@ def build_parser():
     s = sub.add_parser("set", help="write one setting")
     s.add_argument("name", choices=[n for n in names if registry.COMMANDS[n].writable])
     s.add_argument("value")
+    s.add_argument("--no-verify", action="store_true",
+                   help="skip reading the value back after writing")
     s.set_defaults(fn=cmd_set)
 
     eq = sub.add_parser("eq", help="presets, gain and the headphone profile database")
