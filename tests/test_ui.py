@@ -375,8 +375,10 @@ async def test_rename_writes_the_new_name(dac):
         box = app.query_one("#rename", Input)
         box.value = "FT1"
         await box.action_submit()
-        assert await until(app, pilot, lambda: ("name", 9, "FT1") in dac.writes)
-        assert app.slot_names[9] == "FT1"
+        # wait on the UI state, not on the write record: the worker appends to
+        # `writes` before the callback that updates slot_names has run
+        assert await until(app, pilot, lambda: app.slot_names.get(9) == "FT1")
+        assert ("name", 9, "FT1") in dac.writes
 
 
 async def test_factory_slots_cannot_be_renamed(dac):
