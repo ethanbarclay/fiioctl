@@ -86,3 +86,61 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  smoke:
+    # `pip install -e .` in the test job cannot catch packaging mistakes: a
+    # module left out of the wheel, a broken console script, missing metadata.
+    # So install the real artifact into an otherwise empty environment and run
+    # the commands that need no device.
+    name: install the wheel (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Install the wheel, with no extras
+        shell: bash
+        run: python -m pip install "$(ls dist/*.whl)"
+
+      - name: The console script works
+        shell: bash
+        run: |
+          fiioctl --version
+          fiioctl --help > /dev/null
+          fiioctl schema | python -c "import json,sys; json.load(sys.stdin)"
+          fiioctl --dry-run set eq-gain -6
+
+      - name: Every module imports without the optional extras
+        shell: bash
+        run: |
+          python -c "import fiioctl, fiioctl.cli, fiioctl.proto, fiioctl.registry"
+          python -c "import fiioctl.device, fiioctl.eqdb, fiioctl.curve"
+
+      - name: A missing extra is explained, not a traceback
+        shell: bash
+        run: |
+          out=$(fiioctl ui 2>&1 || true)
+          echo "$out"
+          case "$out" in
+            *"pip install"*) echo "ok: pointed at the extra" ;;
+            *) echo "expected a hint about installing the ui extra"; exit 1 ;;
+          esac
+
+      - name: The declared version matches the artifact
+        shell: bash
+        run: >-
+          python -c "import fiioctl;
+          from importlib.metadata import version;
+          assert version('fiioctl') == fiioctl.__version__, 'version drifted';
+          print('version', fiioctl.__version__)"

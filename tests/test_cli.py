@@ -145,3 +145,28 @@ def test_shown_prefers_the_name():
 ])
 def test_diff_scans_cases(before, after, expected):
     assert cli.diff_scans(before, after) == expected
+
+
+# -- version ------------------------------------------------------------------
+
+
+def test_version_flag_prints_the_package_version(capsys):
+    """`--version` is the first thing a bug report will be asked for."""
+    from fiioctl import __version__
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["--version"])
+    assert caught.value.code == 0
+    assert __version__ in capsys.readouterr().out
+
+
+def test_declared_version_matches_the_installed_metadata():
+    """pyproject reads the version from __init__, so the two cannot drift. If
+    this fails, the dynamic version wiring in pyproject.toml broke."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    from fiioctl import __version__
+    try:
+        installed = version("fiioctl")
+    except PackageNotFoundError:
+        pytest.skip("fiioctl is not installed in this environment")
+    assert installed == __version__

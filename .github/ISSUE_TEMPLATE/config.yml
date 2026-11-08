@@ -1,0 +1,12 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Protocol documentation
+    url: https://github.com/ethanbarclay/fiioctl/blob/main/docs/PROTOCOL.md
+    about: >-
+      How the HID protocol works, which findings came from hardware and which
+      from the vendor app, and what is still undecoded.
+  - name: FiiO's online services
+    url: https://github.com/ethanbarclay/fiioctl/blob/main/docs/CATALOGUE.md
+    about: >-
+      The preset catalogue and measurement database, including why a request
+      can start failing if FiiO changes their keys or endpoints.

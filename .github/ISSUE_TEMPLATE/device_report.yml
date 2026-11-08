@@ -1,0 +1,80 @@
+name: Device report
+description: Report how fiioctl behaves on a model that is not yet verified
+title: "Device: "
+labels: [device]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only the **FiiO KA15** has been confirmed against real hardware. Every
+        other entry in the registry comes from FiiO's own tables rather than
+        from anyone trying it, so a report from a device I cannot test is the
+        most useful contribution there is - whether it works or not.
+
+        Nothing here asks you to write to the device. Everything below is
+        read-only.
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: FiiO KA17
+    validations:
+      required: true
+
+  - type: textarea
+    id: info
+    attributes:
+      label: Output of `fiioctl info --json`
+      description: Shows the matched profile, report id, transport and capabilities.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: state
+    attributes:
+      label: Output of `fiioctl state --json`
+      description: Which settings the device actually answers for.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: scan
+    attributes:
+      label: Output of `fiioctl scan`
+      description: >-
+        Read-only: it probes the command space with GET frames and never touches
+        the ids that perform an irreversible action. This is what reveals
+        commands the registry does not know about yet, and which known ones your
+        model stays silent on.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: works
+    attributes:
+      label: What worked and what did not
+      description: >-
+        Particularly whether `peq show` returned plausible bands, and whether
+        anything was wrong or missing compared to FiiO's own app.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        If you are up for one more step, you can identify an undecoded
+        setting. Take a snapshot, change exactly one setting in the device's own
+        menu or in FiiO's app, then diff against it:
+
+        ```
+        fiioctl scan --save before.json
+        # change one setting on the device, then:
+        fiioctl scan --diff before.json
+        ```
+
+        Whichever command moved is that setting. Both are read-only. That is
+        how the KA15's language and brightness commands were identified.
