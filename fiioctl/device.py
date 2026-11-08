@@ -95,7 +95,16 @@ class Dac:
             if dry:  # let --dry-run work with nothing plugged in
                 name = product or "FIIO KA15"
                 return cls(None, {"product_string": name}, registry.match(name), trace, True)
-            raise FiioError("no FiiO device found (check cable, and udev rules on Linux)")
+            # A serial-only model never shows up in an HID enumeration, so the
+            # registry's transport flag cannot explain it later - say it here.
+            serial = registry.models_using("serial")
+            hint = (f" Note that some models are not HID devices and will never "
+                    f"appear here: {', '.join(serial)} "
+                    f"{'is' if len(serial) == 1 else 'are'} driven over USB CDC "
+                    f"serial, which fiioctl does not implement.") if serial else ""
+            raise FiioError(
+                "no FiiO device found over HID (check the cable, and udev rules "
+                "on Linux)." + hint)
         if serial:
             infos = [i for i in infos if (i.get("serial_number") or "") == serial]
         if product:

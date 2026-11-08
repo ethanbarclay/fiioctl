@@ -283,6 +283,33 @@ def test_adapter_devices_are_marked_unsupported():
         assert registry.DEVICES[key].transport == "adapter", key
 
 
+def test_adapter_devices_keep_their_catalogue_ids():
+    """The catalogue is HTTP keyed by product id, so it works regardless of
+    whether the control protocol does."""
+    expected = {"FIIO BTR15": 24, "JADEAUDIO TRUSTBLU": 51, "FIIO FG3": 120,
+                "FIIO JD1 GAMING": 407, "FIIO KG13": 409, "FIIO JK13": 411,
+                "SNOWSKY GAMDONG": 412}
+    for key, cloud in expected.items():
+        assert registry.DEVICES[key].cloud_id == cloud, key
+
+
+def test_no_device_error_mentions_serial_only_models(monkeypatch):
+    """A K15 never appears in an HID enumeration, so the flag cannot explain it
+    later - the not-found error has to."""
+    from fiioctl import device as device_mod
+    from fiioctl.device import Dac, FiioError
+
+    monkeypatch.setattr(device_mod, "candidates", lambda: [])
+    with pytest.raises(FiioError, match="FIIO K15"):
+        Dac.open()
+
+
+def test_models_using_lists_by_transport():
+    assert registry.models_using("serial") == ["FIIO K15"]
+    assert len(registry.models_using("adapter")) == len(registry.ADAPTER_DEVICES)
+    assert "FIIO KA15" in registry.models_using("hid")
+
+
 def test_k15_is_marked_serial():
     """The app refuses to drive a K15 without a serial port controller."""
     assert registry.DEVICES["FIIO K15"].transport == "serial"

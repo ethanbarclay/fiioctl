@@ -155,14 +155,17 @@ KA15 = Device(
 #: Devices the official app drives through its adapter factory (`R4e` in the
 #: bundle) rather than the shared HID command set. A different protocol, so our
 #: frames are meaningless to them.
+#: match key -> (display name, FiiO catalogue id). The catalogue is an HTTP API
+#: keyed by product id, so it works for these models even though their control
+#: protocol does not - keep the ids rather than dropping them.
 ADAPTER_DEVICES = {
-    "FIIO KG13": "FIIO KG13",
-    "FIIO BTR15": "FIIO BTR15",
-    "JADEAUDIO TRUSTBLU": "JadeAudio Trustblu",
-    "FIIO FG3": "FIIO FG3",
-    "FIIO JK13": "FIIO JK13",
-    "SNOWSKY GAMDONG": "SNOWSKY GAMDONG",
-    "FIIO JD1 GAMING": "FIIO JD1 GAMING",
+    "FIIO KG13": ("FIIO KG13", 409),
+    "FIIO BTR15": ("FIIO BTR15", 24),
+    "JADEAUDIO TRUSTBLU": ("JadeAudio Trustblu", 51),
+    "FIIO FG3": ("FIIO FG3", 120),
+    "FIIO JK13": ("FIIO JK13", 411),
+    "SNOWSKY GAMDONG": ("SNOWSKY GAMDONG", 412),
+    "FIIO JD1 GAMING": ("FIIO JD1 GAMING", 407),
 }
 
 #: Normalised product string -> device spec. The product string reported over USB
@@ -196,12 +199,17 @@ DEVICES = {
     "JADEAUDIO JIEZI": Device(name="JadeAudio JIEZI", gain_range=(-12.0, 12.0), cloud_id=118),
     "RETRO NANO": Device(name="RETRO NANO", gain_range=(-12.0, 12.0), cloud_id=38),
     # Adapter devices: listed so the tool can explain itself, not to imply support.
-    **{key: Device(name=label, transport="adapter")
-       for key, label in ADAPTER_DEVICES.items()},
+    **{key: Device(name=label, transport="adapter", cloud_id=cloud)
+       for key, (label, cloud) in ADAPTER_DEVICES.items()},
 }
 
 #: Used when a connected device is not in the table: the app's own fallbacks.
 DEFAULT = Device(name="unknown", report_id=7, gain_range=(-24.0, 12.0))
+
+
+def models_using(transport):
+    """Names of the models declared as using a given transport."""
+    return sorted({d.name for d in DEVICES.values() if d.transport == transport})
 
 
 def label(name, value):
