@@ -1,0 +1,20 @@
+# FiiO USB DACs — let the logged-in user talk to the HID control interface
+# without root. Install to /etc/udev/rules.d/, then:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# ...and re-plug the device.
+#
+# Vendor IDs mirror the official app's WebHID filters; see docs/PROTOCOL.md.
+
+# FiiO / JadeAudio / Snowsky
+KERNEL=="hidraw*", ATTRS{idVendor}=="2972", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2972", MODE="0660", TAG+="uaccess"
+
+# Rebadged controllers used by some models
+KERNEL=="hidraw*", ATTRS{idVendor}=="3302", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="3302", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0a12", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0a12", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0666", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0666", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="31b2", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="31b2", MODE="0660", TAG+="uaccess"
