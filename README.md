@@ -1,8 +1,10 @@
 # fiioctl
 
-Control FiiO USB DACs from the command line — Linux, macOS, Windows. A small,
+[![CI](https://github.com/ethanbarclay/fiioctl/actions/workflows/ci.yml/badge.svg)](https://github.com/ethanbarclay/fiioctl/actions/workflows/ci.yml)
+
+Control FiiO USB DACs from the command line on Linux, macOS and Windows. A small,
 declarative reimplementation of what the FiiO Control web app does over WebHID,
-built to be scripted and read by agents.
+built to be scripted.
 
 The CLI core is ~1085 lines of Python with a single runtime dependency
 (`hidapi`) and no daemon. The terminal UI and FiiO-catalogue support are optional
