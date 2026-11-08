@@ -6,6 +6,11 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # Dispatch exists to re-run a release whose publish step failed. It must be
+  # dispatched against the tag, never a branch: every job below refuses a
+  # non-tag ref, because a branch happens to be able to carry a name like
+  # v0.1.0 and would otherwise sail through the version check and publish
+  # whatever that branch holds.
   workflow_dispatch:
 
 permissions:
@@ -24,10 +29,15 @@ jobs:
 
       - run: python -m pip install build twine
 
-      # A tag cut from the wrong commit is the easy mistake here, and it is
-      # unfixable after upload, so refuse before anything is published.
-      - name: The tag matches the packaged version
+      # Two ways to publish the wrong thing, both unfixable after upload: a
+      # tag cut from the wrong commit, and a ref that is not a tag at all.
+      # Refuse both here, before any artifact exists.
+      - name: The ref is a tag, and it matches the packaged version
         run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "refusing: $GITHUB_REF_NAME is a $GITHUB_REF_TYPE, not a tag"
+            exit 1
+          fi
           tag="${GITHUB_REF_NAME#v}"
           packaged=$(python -c "import fiioctl; print(fiioctl.__version__)")
           echo "tag=$tag packaged=$packaged"
@@ -68,6 +78,7 @@ jobs:
   pypi:
     name: publish to PyPI
     needs: smoke
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     # Trusted publishing: PyPI verifies this workflow's OIDC token, so there is
     # no API token in the repository secrets to leak or rotate. Configured once
@@ -85,6 +96,7 @@ jobs:
   github-release:
     name: publish the GitHub release
     needs: pypi
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write
