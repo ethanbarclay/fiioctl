@@ -17,6 +17,18 @@ from .device import Dac, FiioError, candidates
 EXIT_OK, EXIT_USAGE, EXIT_DEVICE, EXIT_DATA = 0, 2, 3, 4
 
 
+class Abort(Exception):
+    """Stop a subcommand with a message and an exit code.
+
+    Saves every command from writing its own `emit(...); return EXIT_...` pair,
+    and from having to remember which code belongs to which kind of failure.
+    """
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
 def emit(obj, as_json, human=None):
     if as_json:
         json.dump(obj, sys.stdout, indent=2, default=str)
@@ -268,8 +280,7 @@ def cmd_eq_search(args):
     try:
         results = eqdb.search(args.query, limit=args.limit)
     except OSError as exc:
-        emit({"error": str(exc)}, args.json, f"could not reach AutoEq index: {exc}")
-        return EXIT_DATA
+        raise Abort(EXIT_DATA, f"could not reach AutoEq index: {exc}") from exc
     if not results:
         emit([], args.json, "no match")
         return EXIT_DATA
@@ -286,13 +297,11 @@ def cmd_eq_apply(args):
     try:
         results = eqdb.search(args.query, limit=max(args.index + 1, 5))
         if not results:
-            emit({"error": "no match"}, args.json, "no match")
-            return EXIT_DATA
+            raise Abort(EXIT_DATA, "no match")
         entry = results[args.index]
         prof = eqdb.profile(entry)
     except (OSError, ValueError, IndexError) as exc:
-        emit({"error": str(exc)}, args.json, f"could not load profile: {exc}")
-        return EXIT_DATA
+        raise Abort(EXIT_DATA, f"could not load profile: {exc}") from exc
     with connect(args) as dac:
         out = {"profile": entry["name"], "source": entry["source"],
                **_apply_profile(dac, prof, args)}
@@ -308,8 +317,7 @@ def cmd_peq_import(args):
         with open(args.file, encoding="utf-8") as fh:
             prof = eqdb.parse(fh.read())
     except (OSError, ValueError) as exc:
-        emit({"error": str(exc)}, args.json, f"cannot read profile: {exc}")
-        return EXIT_DATA
+        raise Abort(EXIT_DATA, f"cannot read profile: {exc}") from exc
     with connect(args) as dac:
         out = {"file": args.file, **_apply_profile(dac, prof, args)}
     emit(out, args.json, f"imported {args.file}: {out['applied']} bands, "
@@ -368,56 +376,62 @@ def diff_scans(before, after):
     return rows
 
 
+def _as_hex(found):
+    """A scan's {cmd: payload} as the {str(cmd): hex} form snapshots are stored in."""
+    return {str(cmd): payload.hex(" ") for cmd, payload in found.items()}
+
+
+def _report_diff(args, found, names):
+    with open(args.diff, encoding="utf-8") as fh:
+        before = json.load(fh).get("commands", {})
+    rows = diff_scans(before, _as_hex(found))
+    out = [{"cmd": c, "name": names.get(c, ""), "before": b, "after": a}
+           for c, b, a in rows]
+    if args.json:
+        emit(out, True)
+    elif not rows:
+        print("no differences")
+    else:
+        for row in out:
+            print(f"cmd {row['cmd']:>3} ({row['cmd']:#04x})  "
+                  f"{row['before'] or '(silent)'}  ->  {row['after'] or '(silent)'}"
+                  + (f"   {row['name']}" if row["name"] else "   <unknown>"))
+
+
+def _report_scan(args, found, names, product):
+    if args.json:
+        emit({"product": product, "skipped": registry.DESTRUCTIVE,
+              "commands": [{"cmd": c, "name": names.get(c, ""), "payload": p.hex(" ")}
+                           for c, p in found.items()]}, True)
+        return
+    print(f"{product}: {len(found)} of {args.max} commands answered "
+          f"({len(registry.DESTRUCTIVE)} skipped as destructive)\n")
+    for cmd, payload in found.items():
+        print(f"{cmd:>4} {cmd:#04x}  {len(payload):>2}B  {payload.hex(' '):<28} "
+              f"{names.get(cmd, '<unknown>')}")
+    unknown = [c for c in found if c not in names]
+    print(f"\n{len(unknown)} answered but undecoded: "
+          f"{', '.join(str(c) for c in unknown) or 'none'}")
+    silent = [n for c, n in names.items() if c not in found and c not in registry.DESTRUCTIVE]
+    print(f"{len(silent)} known commands silent on this device: {', '.join(silent) or 'none'}")
+
+
 def cmd_scan(args):
     names = known_command_names()
     if args.diff and not os.path.exists(args.diff):
-        emit({"error": f"no such snapshot: {args.diff}"}, args.json,
-             f"no such snapshot: {args.diff}")
-        return EXIT_USAGE
+        raise Abort(EXIT_USAGE, f"no such snapshot: {args.diff}")
     with connect(args) as dac:
         found = dac.scan(limit=args.max, timeout=args.timeout)
         product = dac.info.get("product_string")
 
     if args.save:
         with open(args.save, "w", encoding="utf-8") as fh:
-            json.dump({"product": product, "commands": {str(c): p.hex(" ")
-                                                        for c, p in found.items()}},
-                      fh, indent=2)
+            json.dump({"product": product, "commands": _as_hex(found)}, fh, indent=2)
 
     if args.diff:
-        with open(args.diff, encoding="utf-8") as fh:
-            before = json.load(fh).get("commands", {})
-        now = {str(c): p.hex(" ") for c, p in found.items()}
-        rows = diff_scans(before, now)
-        out = [{"cmd": c, "name": names.get(c, ""), "before": b, "after": a}
-               for c, b, a in rows]
-        if args.json:
-            emit(out, True)
-        elif not rows:
-            print("no differences")
-        else:
-            for row in out:
-                print(f"cmd {row['cmd']:>3} ({row['cmd']:#04x})  "
-                      f"{row['before'] or '(silent)'}  ->  {row['after'] or '(silent)'}"
-                      + (f"   {row['name']}" if row["name"] else "   <unknown>"))
-        return EXIT_OK
-
-    if args.json:
-        emit({"product": product, "skipped": registry.DESTRUCTIVE,
-              "commands": [{"cmd": c, "name": names.get(c, ""), "payload": p.hex(" ")}
-                           for c, p in found.items()]}, True)
-        return EXIT_OK
-
-    print(f"{product}: {len(found)} of {args.max} commands answered "
-          f"({len(registry.DESTRUCTIVE)} skipped as destructive)\n")
-    for cmd, payload in found.items():
-        label = names.get(cmd, "<unknown>")
-        print(f"{cmd:>4} {cmd:#04x}  {len(payload):>2}B  {payload.hex(' '):<28} {label}")
-    unknown = [c for c in found if c not in names]
-    print(f"\n{len(unknown)} answered but undecoded: "
-          f"{', '.join(str(c) for c in unknown) or 'none'}")
-    silent = [n for c, n in names.items() if c not in found and c not in registry.DESTRUCTIVE]
-    print(f"{len(silent)} known commands silent on this device: {', '.join(silent) or 'none'}")
+        _report_diff(args, found, names)
+    else:
+        _report_scan(args, found, names, product)
     return EXIT_OK
 
 
@@ -470,13 +484,18 @@ def cmd_cloud_list(args):
     return EXIT_OK
 
 
+def _pick_preset(args, dac):
+    """The preset `args.index` names, or stop with a usage error."""
+    found = _cloud_presets(args, dac)
+    if not 0 <= args.index < len(found):
+        raise Abort(EXIT_USAGE,
+                    f"no preset {args.index}; `cloud list` showed {len(found)}")
+    return found[args.index]
+
+
 def cmd_cloud_show(args):
     with connect(args) as dac:
-        found = _cloud_presets(args, dac)
-    if not 0 <= args.index < len(found):
-        emit({"error": "index out of range"}, args.json, "index out of range")
-        return EXIT_USAGE
-    preset = found[args.index]
+        preset = _pick_preset(args, dac)
     if args.json:
         emit(preset, True)
         return EXIT_OK
@@ -486,11 +505,7 @@ def cmd_cloud_show(args):
 
 def cmd_cloud_apply(args):
     with connect(args) as dac:
-        found = _cloud_presets(args, dac)
-        if not 0 <= args.index < len(found):
-            emit({"error": "index out of range"}, args.json, "index out of range")
-            return EXIT_USAGE
-        preset = found[args.index]
+        preset = _pick_preset(args, dac)
         out = {"profile": preset["name"], "source": preset["source"],
                **_apply_profile(dac, preset, args)}
     emit(out, args.json, f"applied '{preset['name']}' ({preset['source']}): "
@@ -564,14 +579,12 @@ def cmd_autoeq_apply(args):
 def cmd_ui(args):
     try:
         from .ui import run
-    except ImportError:
-        emit({"error": "textual not installed"}, args.json,
-             "the TUI needs textual:  pip install 'fiioctl[ui]'")
-        return EXIT_USAGE
+    except ImportError as exc:
+        raise Abort(EXIT_USAGE,
+                    "the TUI needs textual:  pip install 'fiioctl[ui]'") from exc
     if args.dry_run:
-        emit({"error": "--dry-run is not supported by the TUI"}, args.json,
-             "the TUI needs to read from the device; --dry-run cannot read")
-        return EXIT_USAGE
+        raise Abort(EXIT_USAGE,
+                    "the TUI needs to read from the device; --dry-run cannot read")
     with connect(args) as dac:
         return run(dac)
 
@@ -659,6 +672,12 @@ def cmd_batch(args):
 # -- parser -------------------------------------------------------------------
 
 
+def add_apply_flags(parser):
+    """The two options every command that writes a profile to the device takes."""
+    parser.add_argument("--slot", help="switch to this preset slot first")
+    parser.add_argument("--save", action="store_true", help="persist after applying")
+
+
 def _group_help(parser):
     """Make a bare command group print its own help instead of erroring."""
 
@@ -723,8 +742,7 @@ def build_parser():
     ap = eqs.add_parser("apply", help="apply a headphone profile from the database")
     ap.add_argument("query")
     ap.add_argument("--index", type=int, default=0, help="which search result to use")
-    ap.add_argument("--slot", help="switch to this preset slot first (e.g. user1)")
-    ap.add_argument("--save", action="store_true", help="persist to the device after applying")
+    add_apply_flags(ap)
     ap.set_defaults(fn=cmd_eq_apply)
 
     peq = sub.add_parser("peq", help="parametric EQ bands")
@@ -740,8 +758,7 @@ def build_parser():
     bs.set_defaults(fn=cmd_peq_set)
     im = peqs.add_parser("import", help="load a ParametricEQ/AutoEq .txt file")
     im.add_argument("file")
-    im.add_argument("--slot", help="switch to this preset slot first")
-    im.add_argument("--save", action="store_true")
+    add_apply_flags(im)
     im.set_defaults(fn=cmd_peq_import)
     ex = peqs.add_parser("export", help="dump current bands as ParametricEQ text")
     ex.add_argument("file", nargs="?")
@@ -761,8 +778,7 @@ def build_parser():
         p2.add_argument("--official-only", action="store_true")
         p2.add_argument("--community-only", action="store_true")
         if name == "apply":
-            p2.add_argument("--slot", help="switch to this preset slot first")
-            p2.add_argument("--save", action="store_true", help="persist after applying")
+            add_apply_flags(p2)
         p2.set_defaults(fn=fn)
 
     ae = sub.add_parser("autoeq", help="FiiO's headphone measurement database (~4500 models)")
@@ -787,8 +803,7 @@ def build_parser():
         if name == "show":
             p2.add_argument("--bands", type=int, default=10)
         else:
-            p2.add_argument("--slot", help="switch to this preset slot first")
-            p2.add_argument("--save", action="store_true", help="persist after applying")
+            add_apply_flags(p2)
         p2.set_defaults(fn=fn)
 
     sc = sub.add_parser("scan", help="probe the command space read-only, and diff snapshots")
@@ -816,6 +831,9 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         return args.fn(args)
+    except Abort as exc:
+        emit({"error": str(exc)}, args.json, f"error: {exc}")
+        return exc.code
     except FiioError as exc:
         emit({"error": str(exc)}, args.json, f"error: {exc}")
         return EXIT_DEVICE

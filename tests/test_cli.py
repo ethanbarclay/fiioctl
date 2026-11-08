@@ -49,6 +49,56 @@ def test_catalogue_failure_reports_as_json_when_asked(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == {"error": "no catalogue id"}
 
 
+def test_abort_carries_its_own_exit_code(monkeypatch, capsys):
+    """Each failure keeps its own code; Abort is not a single catch-all code."""
+    def usage(_args):
+        raise cli.Abort(cli.EXIT_USAGE, "pick a slot first")
+
+    monkeypatch.setattr(cli, "cmd_devices", usage)
+    assert cli.main(["devices"]) == cli.EXIT_USAGE
+    assert "pick a slot first" in capsys.readouterr().out
+
+
+def test_abort_reports_as_json_too(monkeypatch, capsys):
+    import json
+
+    def usage(_args):
+        raise cli.Abort(cli.EXIT_DATA, "no match")
+
+    monkeypatch.setattr(cli, "cmd_devices", usage)
+    assert cli.main(["--json", "devices"]) == cli.EXIT_DATA
+    assert json.loads(capsys.readouterr().out) == {"error": "no match"}
+
+
+def test_missing_snapshot_is_a_usage_error(capsys):
+    assert cli.main(["scan", "--diff", "does-not-exist.json"]) == cli.EXIT_USAGE
+    assert "no such snapshot" in capsys.readouterr().out
+
+
+def test_pick_preset_rejects_an_index_the_listing_does_not_have(monkeypatch):
+    class Args:
+        index = 99
+        query = None
+        official_only = community_only = False
+
+    monkeypatch.setattr(cli, "_cloud_presets", lambda _a, _d: [{"name": "one"}])
+    with pytest.raises(cli.Abort) as caught:
+        cli._pick_preset(Args(), object())
+    assert caught.value.code == cli.EXIT_USAGE
+    assert "showed 1" in str(caught.value)
+
+
+def test_pick_preset_returns_the_row(monkeypatch):
+    class Args:
+        index = 1
+        query = None
+        official_only = community_only = False
+
+    rows = [{"name": "one"}, {"name": "two"}]
+    monkeypatch.setattr(cli, "_cloud_presets", lambda _a, _d: rows)
+    assert cli._pick_preset(Args(), object())["name"] == "two"
+
+
 def test_bad_input_becomes_exit_data_not_a_traceback(monkeypatch, capsys):
     """build_parser() resolves the handler at call time, so patching the module
     global before main() runs is enough to stand in for it."""
