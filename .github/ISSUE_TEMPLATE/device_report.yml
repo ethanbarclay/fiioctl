@@ -66,7 +66,15 @@ body:
   - type: markdown
     attributes:
       value: |
-        If you are up for one more step: change a single setting in your
-        device's own menu or in FiiO's app, run `fiioctl scan --diff` against a
-        snapshot taken beforehand, and the command that moved is that setting.
-        That is how the KA15's language and brightness commands were identified.
+        If you are up for one more step, you can identify an undecoded
+        setting. Take a snapshot, change exactly one setting in the device's own
+        menu or in FiiO's app, then diff against it:
+
+        ```
+        fiioctl scan --save before.json
+        # change one setting on the device, then:
+        fiioctl scan --diff before.json
+        ```
+
+        Whichever command moved is that setting. Both are read-only. That is
+        how the KA15's language and brightness commands were identified.
