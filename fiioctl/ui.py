@@ -46,6 +46,7 @@ LABELS = {
     "eq-preset": "preset", "eq-gain": "global gain", "volume": "volume",
     "volume-max": "volume limit", "volume-switch": "line-out fixed", "balance": "balance",
     "filter": "DAC filter", "led": "indicator LED", "screen": "screen orientation",
+    "language": "menu language", "brightness": "screen brightness",
     "mic-switch": "microphone", "mic-volume": "mic gain", "mic-monitor": "mic sidetone",
     "mic-monitor-volume": "sidetone volume", "mic-nr": "mic noise reduction",
 }
@@ -279,7 +280,8 @@ class FiioApp(App):
             return "yes" if value else "no"
         if name == "volume" and "volume-max" in self.settings:
             return f"{value} / {self.settings['volume-max']}"
-        return str(value)
+        text = registry.label(name, value)
+        return text if text is not None else str(value)
 
     def _preset_label(self, value):
         if value in self.slot_names and self.slot_names[value]:
@@ -419,7 +421,7 @@ class FiioApp(App):
                 return None
             name = rows[row]
             cmd = registry.COMMANDS[name]
-            if name == "eq-preset" or cmd.codec == "bool":
+            if name == "eq-preset" or cmd.codec == "bool" or cmd.enum:
                 step = big = None
             else:
                 unit = " dB" if name == "eq-gain" else ""
@@ -488,6 +490,11 @@ class FiioApp(App):
         cmd = registry.COMMANDS[name]
         if name == "eq-preset":
             options = sorted(set(self.spec.presets.values()))
+            idx = options.index(value) if value in options else 0
+            new = options[(idx + (1 if direction > 0 else -1)) % len(options)]
+        elif cmd.enum:
+            # cycle the declared options; the firmware rejects anything else
+            options = sorted(set(cmd.enum.values()))
             idx = options.index(value) if value in options else 0
             new = options[(idx + (1 if direction > 0 else -1)) % len(options)]
         elif cmd.codec == "bool":

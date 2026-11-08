@@ -34,6 +34,12 @@ def emit(obj, as_json, human=None):
         print(obj)
 
 
+def shown(name, value):
+    """Render a value for people: `english`, not `1`."""
+    text = registry.label(name, value)
+    return text if text is not None else value
+
+
 def connect(args):
     return Dac.open(serial=args.serial, product=args.product, trace=args.trace, dry=args.dry_run)
 
@@ -101,20 +107,32 @@ def cmd_state(args):
                 out[name] = dac.get(name, timeout=0.4 if not args.all else None)
             except FiioError:
                 out[name] = None
-        emit(out, args.json)
+        if args.json:
+            emit(out, True)
+        else:
+            emit({k: shown(k, v) for k, v in out.items()}, False)
     return EXIT_OK
 
 
 def cmd_get(args):
     with connect(args) as dac:
-        emit({args.name: dac.get(args.name)}, args.json, None if args.json else dac.get(args.name))
+        value = dac.get(args.name)
+    out = {args.name: value}
+    text = registry.label(args.name, value)
+    if text is not None:
+        out["label"] = text
+    emit(out, args.json, None if args.json else str(shown(args.name, value)))
     return EXIT_OK
 
 
 def cmd_set(args):
     with connect(args) as dac:
         value = dac.set(args.name, args.value)
-        emit({args.name: value, "written": True}, args.json, f"{args.name} = {value}")
+    out = {args.name: value, "written": True}
+    text = registry.label(args.name, value)
+    if text is not None:
+        out["label"] = text
+    emit(out, args.json, f"{args.name} = {shown(args.name, value)}")
     return EXIT_OK
 
 

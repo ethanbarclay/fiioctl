@@ -51,6 +51,10 @@ COMMANDS = {
     "eq-count": Cmd(24, "u8", mode="r", help="Number of PEQ bands the device exposes"),
     "firmware": Cmd(11, "version", mode="r", help="Firmware version"),
     "screen": Cmd(16, "u8", help="Screen orientation"),
+    # identified by changing the setting on the device and diffing a scan
+    "language": Cmd(17, "u8", enum={"chinese": 0, "english": 1},
+                    help="On-screen menu language"),
+    "brightness": Cmd(14, "u8", rng=(0, 10), help="Screen brightness, 0-10"),
     "led": Cmd(51, "u8", help="Indicator LED configuration"),
     "mic-switch": Cmd(18, "bool", help="Microphone enable"),
     "mic-volume": Cmd(34, "u8", help="Microphone input gain"),
@@ -66,7 +70,8 @@ COMMANDS = {
 #: assumed present on every device, so `fiioctl state` always probes them.
 CAPS = {
     "volume": "volume", "volume-max": "volume", "volume-switch": "volume",
-    "balance": "balance", "filter": "filter", "screen": "screen", "led": "led",
+    "balance": "balance", "filter": "filter", "led": "led",
+    "screen": "screen", "language": "screen", "brightness": "screen",
     "mic-switch": "mic", "mic-volume": "mic", "mic-monitor": "mic",
     "mic-monitor-volume": "mic", "mic-nr": "mic",
 }
@@ -130,7 +135,8 @@ KA15 = Device(
     name_slots=(7, 8, 9),
     name_offset=7,  # USER1 (slot 7) is name index 0 on the KA15
     name_max=8,
-    caps=("eq", "peq", "preset-names", "volume", "filter", "balance"),
+    # the KA15 does have a screen, with language and brightness in its own menu
+    caps=("eq", "peq", "preset-names", "volume", "filter", "balance", "screen"),
     # Verified on firmware 1.1.6: cmd 26 never replies. The KA15 has no separate
     # EQ switch; preset 10 ("off") is how the EQ is bypassed.
     unsupported=("eq-switch",),
@@ -166,6 +172,21 @@ DEVICES = {
 
 #: Used when a connected device is not in the table: the app's own fallbacks.
 DEFAULT = Device(name="unknown", report_id=7, gain_range=(-24.0, 12.0))
+
+
+def label(name, value):
+    """Human-readable name for an enum command's value, or None.
+
+    Raw numbers are useless in output: `language = 1` means nothing, while
+    `language = english` does.
+    """
+    cmd = COMMANDS.get(name)
+    if not cmd or not cmd.enum:
+        return None
+    for text, number in cmd.enum.items():
+        if number == value:
+            return text
+    return None
 
 
 def match(product_string):
