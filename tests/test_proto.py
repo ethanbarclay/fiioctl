@@ -138,6 +138,31 @@ def test_dry_run_never_tries_to_read_back():
     assert dac.set("language", "english", verify=True) == 1
 
 
+def test_fractional_values_rejected_not_crashed():
+    """`set brightness 5.5` used to raise a bare ValueError from the encoder."""
+    from fiioctl.device import FiioError
+    dac = _dry()
+    for bad in ("5.5", 5.5, "abc", None):
+        with pytest.raises(FiioError):
+            dac.set("brightness", bad)
+    for bad in ("30.5", 30.5):
+        with pytest.raises(FiioError):
+            dac.set("volume", bad)
+
+
+def test_whole_numbers_accepted_in_any_form():
+    dac = _dry()
+    assert dac.set("brightness", 5) == 5
+    assert dac.set("brightness", "5") == 5
+    assert dac.set("brightness", 5.0) == 5
+
+
+def test_fractional_still_allowed_where_the_wire_format_supports_it():
+    """eq-gain is dB x10, so tenths are meaningful - do not over-restrict."""
+    dac = _dry(registry.DEFAULT)
+    assert dac.set("eq-gain", -6.5) == -6.5
+
+
 def test_range_still_enforced():
     from fiioctl.device import FiioError
     dac = _dry()
