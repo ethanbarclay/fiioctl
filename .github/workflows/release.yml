@@ -1,0 +1,115 @@
+name: release
+
+# Cutting a release is pushing a tag. Everything else is automatic, and the
+# order matters: PyPI first, because a GitHub release can be deleted and
+# recreated while a PyPI version number can never be reused.
+on:
+  push:
+    tags: ["v*"]
+  # Dispatch exists to re-run a release whose publish step failed. It must be
+  # dispatched against the tag, never a branch: every job below refuses a
+  # non-tag ref, because a branch happens to be able to carry a name like
+  # v0.1.0 and would otherwise sail through the version check and publish
+  # whatever that branch holds.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and check the artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install build twine
+
+      # Two ways to publish the wrong thing, both unfixable after upload: a
+      # tag cut from the wrong commit, and a ref that is not a tag at all.
+      # Refuse both here, before any artifact exists.
+      - name: The ref is a tag, and it matches the packaged version
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "refusing: $GITHUB_REF_NAME is a $GITHUB_REF_TYPE, not a tag"
+            exit 1
+          fi
+          tag="${GITHUB_REF_NAME#v}"
+          packaged=$(python -c "import fiioctl; print(fiioctl.__version__)")
+          echo "tag=$tag packaged=$packaged"
+          test "$tag" = "$packaged"
+
+      - run: python -m build
+      - name: Metadata renders on PyPI
+        run: python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  smoke:
+    name: install the wheel before publishing it
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Install and run
+        shell: bash
+        run: |
+          python -m pip install "$(ls dist/*.whl)"
+          fiioctl --version
+          fiioctl schema | python -c "import json,sys; json.load(sys.stdin)"
+
+  pypi:
+    name: publish to PyPI
+    needs: smoke
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI verifies this workflow's OIDC token, so there is
+    # no API token in the repository secrets to leak or rotate. Configured once
+    # on pypi.org as a pending publisher for owner/repo/release.yml/environment.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: publish the GitHub release
+    needs: pypi
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Create the release with the wheel and sdist attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --verify-tag --generate-notes
+          --title "$GITHUB_REF_NAME"

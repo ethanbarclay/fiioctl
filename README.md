@@ -6,7 +6,7 @@ Control FiiO USB DACs from the command line on Linux, macOS and Windows. A small
 declarative reimplementation of what the FiiO Control web app does over WebHID,
 built to be scripted.
 
-The CLI core is ~1085 lines of Python with a single runtime dependency
+The CLI core is ~1500 lines of Python with a single runtime dependency
 (`hidapi`) and no daemon. The terminal UI and FiiO-catalogue support are optional
 extras on top.
 
@@ -334,3 +334,8 @@ hardware. Headphone measurements by
 MIT licensed — see [LICENSE](LICENSE), and [ATTRIBUTION.md](ATTRIBUTION.md) for
 full provenance and the licences of everything consulted. Not affiliated with or
 endorsed by FiiO.
+
+[CHANGELOG.md](CHANGELOG.md) covers what changed per release.
+[SECURITY.md](SECURITY.md) covers how to report a vulnerability, what this tool
+touches, and why the AES-ECB in the catalogue client is FiiO's choice rather
+than ours.
