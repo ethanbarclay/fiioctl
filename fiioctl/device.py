@@ -6,6 +6,7 @@ audio-control one, pacing commands (the firmware drops back-to-back writes),
 and correlating a reply with the command that asked for it.
 """
 
+import contextlib
 import math
 import time
 
@@ -136,10 +137,8 @@ class Dac:
     def close(self):
         if self.handle is None:
             return
-        try:
+        with contextlib.suppress(Exception):  # closing should never be fatal
             self.handle.close()
-        except Exception:  # pragma: no cover - closing should never be fatal
-            pass
 
     def __enter__(self):
         return self
@@ -225,7 +224,8 @@ class Dac:
         try:
             return registry.COMMANDS[name]
         except KeyError:
-            raise FiioError(f"unknown setting {name!r}; run 'fiioctl schema' for the list") from None
+            raise FiioError(f"unknown setting {name!r}; "
+                            "run 'fiioctl schema' for the list") from None
 
     def get(self, name, timeout=None):
         cmd = self._cmd(name)

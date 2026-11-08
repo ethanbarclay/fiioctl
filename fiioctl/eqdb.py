@@ -127,8 +127,8 @@ def search(query, entries=None, limit=20):
 def profile(entry):
     """Download and parse the ParametricEQ profile for an index entry."""
     model = entry["path"].rstrip("/").split("/")[-1]
-    url = f"{RAW}/{entry['path']}/{urllib.parse.quote(urllib.parse.unquote(model))}%20ParametricEQ.txt"
-    return parse(_fetch(url))
+    name = urllib.parse.quote(urllib.parse.unquote(model))
+    return parse(_fetch(f"{RAW}/{entry['path']}/{name}%20ParametricEQ.txt"))
 
 
 def parse(text):

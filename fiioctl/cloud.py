@@ -172,10 +172,11 @@ def _cached(name, url, refresh=False, ttl=INDEX_TTL):
     """Fetch a JSON document, keeping a copy on disk."""
     from . import eqdb  # local import: shares the cache directory
     path = os.path.join(eqdb.cache_dir(), name)
-    if not refresh and os.path.exists(path):
-        if ttl is None or time.time() - os.path.getmtime(path) < ttl:
-            with open(path, encoding="utf-8") as fh:
-                return json.load(fh)
+    fresh = ttl is None or (os.path.exists(path)
+                            and time.time() - os.path.getmtime(path) < ttl)
+    if not refresh and os.path.exists(path) and fresh:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
     data = _get(url)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False)
