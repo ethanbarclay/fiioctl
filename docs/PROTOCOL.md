@@ -62,6 +62,31 @@ devices are listed, everything else (including the **KA15**) uses `7`:
 | USB20 | 0 |
 | *everything else* | **7** |
 
+## Three transports, only one implemented
+
+The official app does not drive every device the same way, which bounds how far
+this project reaches.
+
+| Transport | Devices | Here |
+|---|---|---|
+| **Shared HID command set** | KA15, KA17, JA11, BTR13, BTR17, K13 R2R, K17, K19, QX13, FP3, Melody, JIEZI, RETRO NANO … | implemented |
+| **Adapter protocol** (`R4e` in the bundle) | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming | not implemented |
+| **USB CDC serial** (`initPortCtrl`, `connectType: SERIAL`) | K15 confirmed; K17/K19 are special-cased and may be too | not implemented |
+
+The app's adapter factory returns a bespoke controller for those seven models and
+`undefined` for everything else, and "everything else" is what falls through to
+the shared command set documented below. For the K15 the app throws *"Port
+controller is undefined"* without a serial connection, so it is not an HID device
+at all.
+
+`registry.Device.transport` records this, and `fiioctl` refuses to open a model
+it cannot speak to rather than sending frames into the void. `--force` overrides
+that for experimentation.
+
+One caveat on the HID row: **only the KA15 has been confirmed on hardware**
+(`Device.verified`). The others are listed because the app's own tables give
+their report id and parameter ranges, not because anyone has tried them.
+
 ## Device selection
 
 USB filters from the app (`T5e`), as decimal/hex:

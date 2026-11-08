@@ -122,6 +122,14 @@ class Device:
     unsupported: tuple = ()
     #: FiiO's own product id, used by their online preset catalogue (bundle `pX`)
     cloud_id: int | None = None
+    #: how this model is actually spoken to. Only "hid" is implemented here; the
+    #: others are recorded so the tool can say so instead of failing obscurely.
+    #:   "hid"     - the shared HID command set this project implements
+    #:   "adapter" - a different protocol, via the app's own adapter factory
+    #:   "serial"  - USB CDC serial rather than HID
+    transport: str = "hid"
+    #: has any of this entry been confirmed against real hardware?
+    verified: bool = False
 
 
 KA15 = Device(
@@ -141,7 +149,21 @@ KA15 = Device(
     # EQ switch; preset 10 ("off") is how the EQ is bypassed.
     unsupported=("eq-switch",),
     cloud_id=110,
+    verified=True,
 )
+
+#: Devices the official app drives through its adapter factory (`R4e` in the
+#: bundle) rather than the shared HID command set. A different protocol, so our
+#: frames are meaningless to them.
+ADAPTER_DEVICES = {
+    "FIIO KG13": "FIIO KG13",
+    "FIIO BTR15": "FIIO BTR15",
+    "JADEAUDIO TRUSTBLU": "JadeAudio Trustblu",
+    "FIIO FG3": "FIIO FG3",
+    "FIIO JK13": "FIIO JK13",
+    "SNOWSKY GAMDONG": "SNOWSKY GAMDONG",
+    "FIIO JD1 GAMING": "FIIO JD1 GAMING",
+}
 
 #: Normalised product string -> device spec. The product string reported over USB
 #: is matched loosely (see :func:`match`), as the official app does.
@@ -154,20 +176,28 @@ DEVICES = {
                         gain_range=(-12.0, 12.0),
                         caps=("eq", "peq", "volume", "filter", "balance"), cloud_id=108),
     "FIIO BTR13": Device(name="FIIO BTR13", gain_range=(-12.0, 12.0), cloud_id=31),
-    "FIIO BTR15": Device(name="FIIO BTR15", gain_range=(-12.0, 12.0), cloud_id=24),
     "FIIO BTR17": Device(name="FIIO BTR17", gain_range=(-12.0, 12.0), cloud_id=35),
     "FIIO K13 R2R": Device(name="FIIO K13 R2R", interval=0.2, gain_range=(-24.0, 12.0),
                            cloud_id=43),
+    # K17/K19 answer the shared command set, but the app hardcodes their band
+    # count instead of reading it and disables their EQ switch, so treat the
+    # rest of these numbers as unconfirmed.
     "FIIO K17": Device(name="FIIO K17", bands=31, q_range=(0.4, 128.0),
                        gain_range=(-24.0, 12.0), cloud_id=302),
     "FIIO K19": Device(name="FIIO K19", bands=31, q_range=(0.4, 128.0),
                        gain_range=(-24.0, 12.0), cloud_id=29),
-    "FIIO K15": Device(name="FIIO K15", gain_range=(-24.0, 12.0), cloud_id=303),
+    # The app refuses to drive a K15 without a serial port controller
+    # ("Port controller is undefined"), so it is not an HID device at all.
+    "FIIO K15": Device(name="FIIO K15", gain_range=(-24.0, 12.0), cloud_id=303,
+                       transport="serial"),
     "FIIO FP3": Device(name="FIIO FP3", gain_range=(-12.0, 12.0), cloud_id=111),
     "FIIO QX13": Device(name="FIIO QX13", gain_range=(-12.0, 12.0), cloud_id=113),
     "SNOWSKY MELODY": Device(name="SNOWSKY Melody", gain_range=(-12.0, 12.0), cloud_id=114),
     "JADEAUDIO JIEZI": Device(name="JadeAudio JIEZI", gain_range=(-12.0, 12.0), cloud_id=118),
     "RETRO NANO": Device(name="RETRO NANO", gain_range=(-12.0, 12.0), cloud_id=38),
+    # Adapter devices: listed so the tool can explain itself, not to imply support.
+    **{key: Device(name=label, transport="adapter")
+       for key, label in ADAPTER_DEVICES.items()},
 }
 
 #: Used when a connected device is not in the table: the app's own fallbacks.

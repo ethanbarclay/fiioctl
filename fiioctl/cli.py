@@ -41,7 +41,8 @@ def shown(name, value):
 
 
 def connect(args):
-    return Dac.open(serial=args.serial, product=args.product, trace=args.trace, dry=args.dry_run)
+    return Dac.open(serial=args.serial, product=args.product, trace=args.trace,
+                    dry=args.dry_run, force=getattr(args, "force", False))
 
 
 # -- individual commands ------------------------------------------------------
@@ -51,6 +52,7 @@ def cmd_devices(args):
     rows = [
         {
             "product": i.get("product_string"),
+            "transport": registry.match(i.get("product_string")).transport,
             "serial": i.get("serial_number"),
             "vendor_id": hex(i.get("vendor_id", 0)),
             "product_id": hex(i.get("product_id", 0)),
@@ -64,7 +66,9 @@ def cmd_devices(args):
         return EXIT_DEVICE
     emit(rows, args.json, None if args.json else "\n".join(
         f"{r['product']}  serial={r['serial']}  {r['vendor_id']}:{r['product_id']} "
-        f"usage={r['usage_page']} iface={r['interface']}" for r in rows))
+        f"usage={r['usage_page']} iface={r['interface']}"
+        + ("" if r["transport"] == "hid" else f"   [{r['transport']}: not supported]")
+        for r in rows))
     return EXIT_OK
 
 
@@ -75,6 +79,8 @@ def cmd_info(args):
             "product": dac.info.get("product_string"),
             "serial": dac.info.get("serial_number"),
             "matched_profile": spec.name,
+            "transport": spec.transport,
+            "verified_on_hardware": spec.verified,
             "report_id": spec.report_id,
             "min_interval_s": spec.interval,
             "gain_range_db": list(spec.gain_range),
@@ -617,7 +623,8 @@ def cmd_schema(args):
                       "gain_range": list(d.gain_range), "bands": d.bands,
                       "presets": d.presets, "capabilities": list(d.caps),
                       "renameable_slots": list(d.name_slots),
-                      "unsupported": list(d.unsupported)}
+                      "unsupported": list(d.unsupported),
+                      "transport": d.transport, "verified": d.verified}
                 for key, d in registry.DEVICES.items()
             },
             "exit_codes": {"ok": EXIT_OK, "usage": EXIT_USAGE,
@@ -689,6 +696,8 @@ def build_parser():
     p.add_argument("--product", help="select device by product-string substring")
     p.add_argument("--dry-run", action="store_true",
                    help="build and show packets without writing to the device")
+    p.add_argument("--force", action="store_true",
+                   help="talk to a model whose transport is unsupported anyway")
     sub = p.add_subparsers(dest="cmd", metavar="COMMAND")
     p.set_defaults(fn=_group_help(p))
 

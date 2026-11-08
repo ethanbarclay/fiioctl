@@ -59,8 +59,16 @@ class Dac:
 
     # -- lifecycle ----------------------------------------------------------
 
+    #: why a model cannot be driven, keyed by its declared transport
+    UNSUPPORTED = {
+        "adapter": ("the official app drives this model through a different "
+                    "protocol, which fiioctl does not implement"),
+        "serial": ("this model is driven over USB CDC serial rather than HID, "
+                   "and fiioctl has no serial transport"),
+    }
+
     @classmethod
-    def open(cls, serial=None, product=None, trace=False, dry=False):
+    def open(cls, serial=None, product=None, trace=False, dry=False, force=False):
         try:
             infos = candidates()
         except FiioError:
@@ -81,6 +89,12 @@ class Dac:
             raise FiioError(f"no FiiO device matched serial={serial!r} product={product!r}")
         info = _pick(infos)
         spec = registry.match(info.get("product_string"))
+        reason = cls.UNSUPPORTED.get(spec.transport)
+        if reason and not force and not dry:
+            raise FiioError(
+                f"{spec.name}: {reason}. See docs/PROTOCOL.md. "
+                "Pass --force to talk to it anyway as if it were an HID device."
+            )
         handle = _hid().device()
         try:
             handle.open_path(info["path"])

@@ -252,6 +252,60 @@ def test_filter_range_admits_zero():
     assert lo == 0 and hi >= 5
 
 
+def test_adapter_devices_are_marked_unsupported():
+    """These seven are driven by a different protocol in the official app."""
+    for key in registry.ADAPTER_DEVICES:
+        assert registry.DEVICES[key].transport == "adapter", key
+
+
+def test_k15_is_marked_serial():
+    """The app refuses to drive a K15 without a serial port controller."""
+    assert registry.DEVICES["FIIO K15"].transport == "serial"
+
+
+def test_only_the_ka15_claims_hardware_verification():
+    verified = [k for k, d in registry.DEVICES.items() if d.verified]
+    assert verified == ["FIIO KA15"]
+
+
+def test_hid_is_the_default_transport():
+    assert registry.DEVICES["FIIO KA15"].transport == "hid"
+    assert registry.DEFAULT.transport == "hid"
+
+
+def test_unsupported_transports_have_an_explanation():
+    from fiioctl.device import Dac
+    declared = {d.transport for d in registry.DEVICES.values()} - {"hid"}
+    assert declared <= set(Dac.UNSUPPORTED)
+    assert declared == {"adapter", "serial"}
+
+
+def test_open_refuses_a_device_whose_transport_is_not_implemented(monkeypatch):
+    from fiioctl import device as device_mod
+    from fiioctl.device import Dac, FiioError
+
+    fake = {"product_string": "FIIO BTR15", "path": b"fake", "vendor_id": 0x2972,
+            "usage_page": 0x000C}
+    monkeypatch.setattr(device_mod, "candidates", lambda: [fake])
+
+    with pytest.raises(FiioError, match="different protocol"):
+        Dac.open()
+
+
+def test_force_gets_past_the_transport_gate(monkeypatch):
+    """--force should fail for some other reason, not the transport check."""
+    from fiioctl import device as device_mod
+    from fiioctl.device import Dac, FiioError
+
+    fake = {"product_string": "FIIO BTR15", "path": b"fake", "vendor_id": 0x2972,
+            "usage_page": 0x000C}
+    monkeypatch.setattr(device_mod, "candidates", lambda: [fake])
+
+    with pytest.raises(FiioError) as caught:
+        Dac.open(force=True)
+    assert "different protocol" not in str(caught.value)
+
+
 def test_registry_loose_product_match():
     assert registry.match("FIIO KA15 ").name == "FIIO KA15"
     assert registry.match("JadeAudio JA11").report_id == 2
