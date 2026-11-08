@@ -21,6 +21,22 @@ class FiioError(RuntimeError):
     """Any failure talking to the device."""
 
 
+#: codecs that encode a whole number. A fractional value would reach `int()`
+#: inside the encoder and raise a bare ValueError, or silently truncate.
+INTEGER_CODECS = ("u8", "u16", "balance")
+
+
+def _integral(name, value):
+    """Require a whole number, so bad input fails as a FiioError not a traceback."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise FiioError(f"{name} must be a whole number; got {value!r}") from None
+    if number != int(number):
+        raise FiioError(f"{name} must be a whole number; got {value!r}")
+    return int(number)
+
+
 def _hid():
     if hid is None:
         raise FiioError("the 'hid' package is not installed: pip install hid")
@@ -59,8 +75,16 @@ class Dac:
 
     # -- lifecycle ----------------------------------------------------------
 
+    #: why a model cannot be driven, keyed by its declared transport
+    UNSUPPORTED = {
+        "adapter": ("the official app drives this model through a different "
+                    "protocol, which fiioctl does not implement"),
+        "serial": ("this model is driven over USB CDC serial rather than HID, "
+                   "and fiioctl has no serial transport"),
+    }
+
     @classmethod
-    def open(cls, serial=None, product=None, trace=False, dry=False):
+    def open(cls, serial=None, product=None, trace=False, dry=False, force=False):
         try:
             infos = candidates()
         except FiioError:
@@ -71,7 +95,16 @@ class Dac:
             if dry:  # let --dry-run work with nothing plugged in
                 name = product or "FIIO KA15"
                 return cls(None, {"product_string": name}, registry.match(name), trace, True)
-            raise FiioError("no FiiO device found (check cable, and udev rules on Linux)")
+            # A serial-only model never shows up in an HID enumeration, so the
+            # registry's transport flag cannot explain it later - say it here.
+            serial = registry.models_using("serial")
+            hint = (f" Note that some models are not HID devices and will never "
+                    f"appear here: {', '.join(serial)} "
+                    f"{'is' if len(serial) == 1 else 'are'} driven over USB CDC "
+                    f"serial, which fiioctl does not implement.") if serial else ""
+            raise FiioError(
+                "no FiiO device found over HID (check the cable, and udev rules "
+                "on Linux)." + hint)
         if serial:
             infos = [i for i in infos if (i.get("serial_number") or "") == serial]
         if product:
@@ -81,6 +114,12 @@ class Dac:
             raise FiioError(f"no FiiO device matched serial={serial!r} product={product!r}")
         info = _pick(infos)
         spec = registry.match(info.get("product_string"))
+        reason = cls.UNSUPPORTED.get(spec.transport)
+        if reason and not force and not dry:
+            raise FiioError(
+                f"{spec.name}: {reason}. See docs/PROTOCOL.md. "
+                "Pass --force to talk to it anyway as if it were an HID device."
+            )
         handle = _hid().device()
         try:
             handle.open_path(info["path"])
@@ -195,25 +234,84 @@ class Dac:
         decode = proto.CODECS[cmd.codec][1]
         return decode(self.request(cmd.id, timeout=timeout))
 
-    def set(self, name, value):
+    def _coerce(self, name, cmd, value):
+        """Resolve a value to something the device will actually accept.
+
+        The firmware does not report errors: an out-of-range write is either
+        ignored, leaving the old value, or clamped to a different one. Either way
+        a caller that trusted the request would be told of a change that did not
+        happen. So reject what we know to be invalid before sending it.
+        """
+        if cmd.enum:
+            if str(value) in cmd.enum:
+                return cmd.enum[str(value)]
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                number = None
+            if number is None or number not in cmd.enum.values():
+                options = ", ".join(f"{text} ({num})"
+                                    for text, num in sorted(cmd.enum.items(),
+                                                            key=lambda kv: kv[1]))
+                raise FiioError(f"{name} accepts {options}; got {value!r}")
+            return number
+
+        if name == "eq-preset" and self.spec.presets:
+            # preset names are per-device, so they live on the spec rather than
+            # in Cmd.enum; resolve one before trying to read a number
+            if isinstance(value, str) and value.strip().lower() in self.spec.presets:
+                return self.spec.presets[value.strip().lower()]
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                valid = ", ".join(sorted(self.spec.presets))
+                raise FiioError(f"eq-preset {value!r} is not a number or a preset "
+                                f"name; names: {valid}") from None
+            if number not in set(self.spec.presets.values()):
+                valid = ", ".join(f"{k} ({v})" for k, v in
+                                  sorted(self.spec.presets.items(), key=lambda kv: kv[1]))
+                raise FiioError(f"eq-preset {number} is not a slot on this device; "
+                                f"valid: {valid}")
+            return number
+
+        if name == "eq-gain":
+            return self.snap_gain(value)
+
+        if cmd.codec in INTEGER_CODECS:
+            value = _integral(name, value)
+
+        if cmd.rng is not None and cmd.codec != "bool":
+            lo, hi = cmd.rng
+            if not lo <= float(value) <= hi:
+                raise FiioError(f"{name}={value} outside {lo}..{hi}")
+        return value
+
+    def set(self, name, value, verify=False):
+        """Write a setting. With `verify`, read it back and return what stuck.
+
+        Verification costs one extra round-trip, so it is off by default for
+        interactive callers that re-read anyway, and on for one-shot CLI writes.
+        """
         cmd = self._cmd(name)
         if not cmd.writable:
             raise FiioError(f"{name} is read-only")
         encode = proto.CODECS[cmd.codec][0]
         if encode is None:
             raise FiioError(f"{name} is read-only")
-        if cmd.enum and str(value) in cmd.enum:
-            value = cmd.enum[str(value)]
-        if name == "eq-gain":
-            value = self.snap_gain(value)
-        if cmd.rng is not None and cmd.codec != "bool":
-            lo, hi = cmd.rng
-            if not lo <= float(value) <= hi:
-                raise FiioError(f"{name}={value} outside {lo}..{hi}")
+
+        value = self._coerce(name, cmd, value)
         payload = encode(value)
         self.send(cmd.id, payload)
         # Report the value as it went over the wire, not as it was typed.
-        return proto.CODECS[cmd.codec][1](payload)
+        sent = proto.CODECS[cmd.codec][1](payload)
+        # a dry run has nothing to read back from, and verifying would turn a
+        # command that only builds packets into an error
+        if not verify or not cmd.readable or self.dry:
+            return sent
+        actual = self.get(name)
+        if actual != sent:
+            raise FiioError(f"{name}: wrote {sent} but the device holds {actual}")
+        return actual
 
     # -- PEQ ----------------------------------------------------------------
 

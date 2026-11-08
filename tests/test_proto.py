@@ -82,6 +82,114 @@ def test_ka15_registry_facts():
     assert "eq-switch" in spec.unsupported
 
 
+def _dry(spec=None):
+    """A Dac that builds packets but writes nowhere."""
+    from fiioctl.device import Dac
+    return Dac(None, {"product_string": "FIIO KA15"}, spec or registry.KA15, dry=True)
+
+
+def test_enum_rejects_values_the_firmware_would_ignore():
+    """`set language 2` used to report success while the device kept its value."""
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="chinese"):
+        dac.set("language", 2)
+    with pytest.raises(FiioError):
+        dac.set("language", "klingon")
+
+
+def test_enum_accepts_names_and_valid_numbers():
+    dac = _dry()
+    assert dac.set("language", "english") == 1
+    assert dac.set("language", "chinese") == 0
+    assert dac.set("language", 1) == 1
+    assert dac.set("language", 0) == 0
+
+
+def test_preset_rejects_slots_the_device_does_not_have():
+    """`set eq-preset 99` used to report 99 while the device clamped to 10."""
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="not a slot"):
+        dac.set("eq-preset", 99)
+    assert dac.set("eq-preset", 9) == 9
+
+
+def test_preset_accepts_the_names_the_device_advertises():
+    """`set eq-preset user1` must work, since the error text promises names do."""
+    dac = _dry()
+    assert dac.set("eq-preset", "user1") == 7
+    assert dac.set("eq-preset", "USER1") == 7
+    assert dac.set("eq-preset", "off") == 10
+    assert dac.set("eq-preset", 7) == 7
+
+
+def test_preset_name_error_lists_the_names():
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="user1"):
+        dac.set("eq-preset", "nonsense")
+
+
+def test_dry_run_never_tries_to_read_back():
+    """--dry-run builds packets with no device, so verification must be skipped."""
+    dac = _dry()
+    assert dac.set("volume", 30, verify=True) == 30
+    assert dac.set("language", "english", verify=True) == 1
+
+
+def test_fractional_values_rejected_not_crashed():
+    """`set brightness 5.5` used to raise a bare ValueError from the encoder."""
+    from fiioctl.device import FiioError
+    dac = _dry()
+    for bad in ("5.5", 5.5, "abc", None):
+        with pytest.raises(FiioError):
+            dac.set("brightness", bad)
+    for bad in ("30.5", 30.5):
+        with pytest.raises(FiioError):
+            dac.set("volume", bad)
+
+
+def test_whole_numbers_accepted_in_any_form():
+    dac = _dry()
+    assert dac.set("brightness", 5) == 5
+    assert dac.set("brightness", "5") == 5
+    assert dac.set("brightness", 5.0) == 5
+
+
+def test_fractional_still_allowed_where_the_wire_format_supports_it():
+    """eq-gain is dB x10, so tenths are meaningful - do not over-restrict."""
+    dac = _dry(registry.DEFAULT)
+    assert dac.set("eq-gain", -6.5) == -6.5
+
+
+def test_range_still_enforced():
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="outside"):
+        dac.set("brightness", 11)
+    assert dac.set("brightness", 10) == 10
+
+
+def test_verify_reports_what_the_device_actually_holds():
+    """A firmware that clamps must not be reported as having accepted the write."""
+    from fiioctl.device import Dac, FiioError
+
+    class Clamping(Dac):
+        """Not dry: verification is skipped on a dry connection by design."""
+
+        def send(self, cmd, data=b"", hdr=None):
+            pass
+
+        def get(self, name, timeout=None):
+            return 10  # whatever was asked for, the device lands on 10
+
+    dac = Clamping(None, {}, registry.KA15)
+    assert dac.set("eq-preset", 10, verify=True) == 10
+    with pytest.raises(FiioError, match="device holds 10"):
+        dac.set("eq-preset", 9, verify=True)
+
+
 def test_scan_never_probes_destructive_commands():
     """A GET should be harmless, but not if firmware acts on the command byte."""
     assert set(registry.DESTRUCTIVE) == {25, 27, 33}
@@ -167,6 +275,87 @@ def test_filter_range_admits_zero():
     """The KA15 reports filter mode 0, so 1-7 would have been too narrow."""
     lo, hi = registry.COMMANDS["filter"].rng
     assert lo == 0 and hi >= 5
+
+
+def test_adapter_devices_are_marked_unsupported():
+    """These seven are driven by a different protocol in the official app."""
+    for key in registry.ADAPTER_DEVICES:
+        assert registry.DEVICES[key].transport == "adapter", key
+
+
+def test_adapter_devices_keep_their_catalogue_ids():
+    """The catalogue is HTTP keyed by product id, so it works regardless of
+    whether the control protocol does."""
+    expected = {"FIIO BTR15": 24, "JADEAUDIO TRUSTBLU": 51, "FIIO FG3": 120,
+                "FIIO JD1 GAMING": 407, "FIIO KG13": 409, "FIIO JK13": 411,
+                "SNOWSKY GAMDONG": 412}
+    for key, cloud in expected.items():
+        assert registry.DEVICES[key].cloud_id == cloud, key
+
+
+def test_no_device_error_mentions_serial_only_models(monkeypatch):
+    """A K15 never appears in an HID enumeration, so the flag cannot explain it
+    later - the not-found error has to."""
+    from fiioctl import device as device_mod
+    from fiioctl.device import Dac, FiioError
+
+    monkeypatch.setattr(device_mod, "candidates", lambda: [])
+    with pytest.raises(FiioError, match="FIIO K15"):
+        Dac.open()
+
+
+def test_models_using_lists_by_transport():
+    assert registry.models_using("serial") == ["FIIO K15"]
+    assert len(registry.models_using("adapter")) == len(registry.ADAPTER_DEVICES)
+    assert "FIIO KA15" in registry.models_using("hid")
+
+
+def test_k15_is_marked_serial():
+    """The app refuses to drive a K15 without a serial port controller."""
+    assert registry.DEVICES["FIIO K15"].transport == "serial"
+
+
+def test_only_the_ka15_claims_hardware_verification():
+    verified = [k for k, d in registry.DEVICES.items() if d.verified]
+    assert verified == ["FIIO KA15"]
+
+
+def test_hid_is_the_default_transport():
+    assert registry.DEVICES["FIIO KA15"].transport == "hid"
+    assert registry.DEFAULT.transport == "hid"
+
+
+def test_unsupported_transports_have_an_explanation():
+    from fiioctl.device import Dac
+    declared = {d.transport for d in registry.DEVICES.values()} - {"hid"}
+    assert declared <= set(Dac.UNSUPPORTED)
+    assert declared == {"adapter", "serial"}
+
+
+def test_open_refuses_a_device_whose_transport_is_not_implemented(monkeypatch):
+    from fiioctl import device as device_mod
+    from fiioctl.device import Dac, FiioError
+
+    fake = {"product_string": "FIIO BTR15", "path": b"fake", "vendor_id": 0x2972,
+            "usage_page": 0x000C}
+    monkeypatch.setattr(device_mod, "candidates", lambda: [fake])
+
+    with pytest.raises(FiioError, match="different protocol"):
+        Dac.open()
+
+
+def test_force_gets_past_the_transport_gate(monkeypatch):
+    """--force should fail for some other reason, not the transport check."""
+    from fiioctl import device as device_mod
+    from fiioctl.device import Dac, FiioError
+
+    fake = {"product_string": "FIIO BTR15", "path": b"fake", "vendor_id": 0x2972,
+            "usage_page": 0x000C}
+    monkeypatch.setattr(device_mod, "candidates", lambda: [fake])
+
+    with pytest.raises(FiioError) as caught:
+        Dac.open(force=True)
+    assert "different protocol" not in str(caught.value)
 
 
 def test_registry_loose_product_match():

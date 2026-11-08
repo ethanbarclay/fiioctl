@@ -284,7 +284,30 @@ Be aware of what has and has not been checked:
 - **Not yet exercised**: `factory-reset`, and `peq clear` on a device with
   settings worth keeping.
 - **Best-effort**: the non-KA15 entries in `DEVICES`, transcribed from the app's
-  per-device tables rather than observed.
+  per-device tables rather than observed. `fiioctl info` reports
+  `verified_on_hardware` so you know which you are relying on.
+
+### Devices it cannot drive
+
+FiiO's own app uses three different transports, and this project implements one
+of them — the shared HID command set. Two groups are therefore out of reach, and
+`fiioctl` says so rather than failing obscurely:
+
+| | Devices |
+|---|---|
+| different protocol (adapter) | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming |
+| USB CDC serial, not HID | K15 (confirmed); K17/K19 possibly |
+
+```console
+$ fiioctl info
+error: FIIO BTR15: the official app drives this model through a different
+       protocol, which fiioctl does not implement. See docs/PROTOCOL.md.
+       Pass --force to talk to it anyway as if it were an HID device.
+```
+
+Everything else the app supports uses the same command numbers, so volume, EQ,
+presets, filter and balance should work — see
+[docs/PROTOCOL.md](docs/PROTOCOL.md) for the evidence.
 
 Use `--dry-run` to inspect packets without writing, and `--trace` to watch real
 traffic. `fiioctl devices` and `fiioctl info` report which profile was matched.

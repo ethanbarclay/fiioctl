@@ -51,6 +51,10 @@ COMMANDS = {
     "eq-count": Cmd(24, "u8", mode="r", help="Number of PEQ bands the device exposes"),
     "firmware": Cmd(11, "version", mode="r", help="Firmware version"),
     "screen": Cmd(16, "u8", help="Screen orientation"),
+    # identified by changing the setting on the device and diffing a scan
+    "language": Cmd(17, "u8", enum={"chinese": 0, "english": 1},
+                    help="On-screen menu language"),
+    "brightness": Cmd(14, "u8", rng=(0, 10), help="Screen brightness, 0-10"),
     "led": Cmd(51, "u8", help="Indicator LED configuration"),
     "mic-switch": Cmd(18, "bool", help="Microphone enable"),
     "mic-volume": Cmd(34, "u8", help="Microphone input gain"),
@@ -66,7 +70,8 @@ COMMANDS = {
 #: assumed present on every device, so `fiioctl state` always probes them.
 CAPS = {
     "volume": "volume", "volume-max": "volume", "volume-switch": "volume",
-    "balance": "balance", "filter": "filter", "screen": "screen", "led": "led",
+    "balance": "balance", "filter": "filter", "led": "led",
+    "screen": "screen", "language": "screen", "brightness": "screen",
     "mic-switch": "mic", "mic-volume": "mic", "mic-monitor": "mic",
     "mic-monitor-volume": "mic", "mic-nr": "mic",
 }
@@ -117,6 +122,14 @@ class Device:
     unsupported: tuple = ()
     #: FiiO's own product id, used by their online preset catalogue (bundle `pX`)
     cloud_id: int | None = None
+    #: how this model is actually spoken to. Only "hid" is implemented here; the
+    #: others are recorded so the tool can say so instead of failing obscurely.
+    #:   "hid"     - the shared HID command set this project implements
+    #:   "adapter" - a different protocol, via the app's own adapter factory
+    #:   "serial"  - USB CDC serial rather than HID
+    transport: str = "hid"
+    #: has any of this entry been confirmed against real hardware?
+    verified: bool = False
 
 
 KA15 = Device(
@@ -130,12 +143,30 @@ KA15 = Device(
     name_slots=(7, 8, 9),
     name_offset=7,  # USER1 (slot 7) is name index 0 on the KA15
     name_max=8,
-    caps=("eq", "peq", "preset-names", "volume", "filter", "balance"),
+    # the KA15 does have a screen, with language and brightness in its own menu
+    caps=("eq", "peq", "preset-names", "volume", "filter", "balance", "screen"),
     # Verified on firmware 1.1.6: cmd 26 never replies. The KA15 has no separate
     # EQ switch; preset 10 ("off") is how the EQ is bypassed.
     unsupported=("eq-switch",),
     cloud_id=110,
+    verified=True,
 )
+
+#: Devices the official app drives through its adapter factory (`R4e` in the
+#: bundle) rather than the shared HID command set. A different protocol, so our
+#: frames are meaningless to them.
+#: match key -> (display name, FiiO catalogue id). The catalogue is an HTTP API
+#: keyed by product id, so it works for these models even though their control
+#: protocol does not - keep the ids rather than dropping them.
+ADAPTER_DEVICES = {
+    "FIIO KG13": ("FIIO KG13", 409),
+    "FIIO BTR15": ("FIIO BTR15", 24),
+    "JADEAUDIO TRUSTBLU": ("JadeAudio Trustblu", 51),
+    "FIIO FG3": ("FIIO FG3", 120),
+    "FIIO JK13": ("FIIO JK13", 411),
+    "SNOWSKY GAMDONG": ("SNOWSKY GAMDONG", 412),
+    "FIIO JD1 GAMING": ("FIIO JD1 GAMING", 407),
+}
 
 #: Normalised product string -> device spec. The product string reported over USB
 #: is matched loosely (see :func:`match`), as the official app does.
@@ -148,24 +179,52 @@ DEVICES = {
                         gain_range=(-12.0, 12.0),
                         caps=("eq", "peq", "volume", "filter", "balance"), cloud_id=108),
     "FIIO BTR13": Device(name="FIIO BTR13", gain_range=(-12.0, 12.0), cloud_id=31),
-    "FIIO BTR15": Device(name="FIIO BTR15", gain_range=(-12.0, 12.0), cloud_id=24),
     "FIIO BTR17": Device(name="FIIO BTR17", gain_range=(-12.0, 12.0), cloud_id=35),
     "FIIO K13 R2R": Device(name="FIIO K13 R2R", interval=0.2, gain_range=(-24.0, 12.0),
                            cloud_id=43),
+    # K17/K19 answer the shared command set, but the app hardcodes their band
+    # count instead of reading it and disables their EQ switch, so treat the
+    # rest of these numbers as unconfirmed.
     "FIIO K17": Device(name="FIIO K17", bands=31, q_range=(0.4, 128.0),
                        gain_range=(-24.0, 12.0), cloud_id=302),
     "FIIO K19": Device(name="FIIO K19", bands=31, q_range=(0.4, 128.0),
                        gain_range=(-24.0, 12.0), cloud_id=29),
-    "FIIO K15": Device(name="FIIO K15", gain_range=(-24.0, 12.0), cloud_id=303),
+    # The app refuses to drive a K15 without a serial port controller
+    # ("Port controller is undefined"), so it is not an HID device at all.
+    "FIIO K15": Device(name="FIIO K15", gain_range=(-24.0, 12.0), cloud_id=303,
+                       transport="serial"),
     "FIIO FP3": Device(name="FIIO FP3", gain_range=(-12.0, 12.0), cloud_id=111),
     "FIIO QX13": Device(name="FIIO QX13", gain_range=(-12.0, 12.0), cloud_id=113),
     "SNOWSKY MELODY": Device(name="SNOWSKY Melody", gain_range=(-12.0, 12.0), cloud_id=114),
     "JADEAUDIO JIEZI": Device(name="JadeAudio JIEZI", gain_range=(-12.0, 12.0), cloud_id=118),
     "RETRO NANO": Device(name="RETRO NANO", gain_range=(-12.0, 12.0), cloud_id=38),
+    # Adapter devices: listed so the tool can explain itself, not to imply support.
+    **{key: Device(name=label, transport="adapter", cloud_id=cloud)
+       for key, (label, cloud) in ADAPTER_DEVICES.items()},
 }
 
 #: Used when a connected device is not in the table: the app's own fallbacks.
 DEFAULT = Device(name="unknown", report_id=7, gain_range=(-24.0, 12.0))
+
+
+def models_using(transport):
+    """Names of the models declared as using a given transport."""
+    return sorted({d.name for d in DEVICES.values() if d.transport == transport})
+
+
+def label(name, value):
+    """Human-readable name for an enum command's value, or None.
+
+    Raw numbers are useless in output: `language = 1` means nothing, while
+    `language = english` does.
+    """
+    cmd = COMMANDS.get(name)
+    if not cmd or not cmd.enum:
+        return None
+    for text, number in cmd.enum.items():
+        if number == value:
+            return text
+    return None
 
 
 def match(product_string):
