@@ -1,6 +1,8 @@
 # fiioctl
 
 [![CI](https://github.com/ethanbarclay/fiioctl/actions/workflows/ci.yml/badge.svg)](https://github.com/ethanbarclay/fiioctl/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/fiioctl)](https://pypi.org/project/fiioctl/)
+[![Python versions](https://img.shields.io/pypi/pyversions/fiioctl)](https://pypi.org/project/fiioctl/)
 
 Control FiiO USB DACs from the command line on Linux, macOS and Windows. A small,
 declarative reimplementation of what the FiiO Control web app does over WebHID,
@@ -40,7 +42,15 @@ global gain   -5.8 dB
 ## Install
 
 ```bash
-pipx install .            # or: pip install -e .
+pipx install fiioctl                 # or: pip install fiioctl
+pipx install 'fiioctl[all]'          # with the terminal UI and catalogue search
+```
+
+From a clone instead, for hacking on it:
+
+```bash
+git clone https://github.com/ethanbarclay/fiioctl && cd fiioctl
+pip install -e '.[dev]'
 ```
 
 The one dependency is **`hidapi`** (cython-hidapi), whose wheels bundle the
@@ -56,12 +66,16 @@ If you use **pyenv-win**, console scripts land in the version's `Scripts`
 directory, which is not on `PATH` — run `pyenv rehash` once after installing to
 generate the shim, otherwise `fiioctl` is "not recognized".
 
-On Linux, allow non-root access to the device:
+On Linux, allow non-root access to the device. The rule is not part of the
+installed package, so fetch it:
 
 ```bash
-sudo install -m644 packaging/99-fiio.rules /etc/udev/rules.d/
+curl -sO https://raw.githubusercontent.com/ethanbarclay/fiioctl/main/packaging/99-fiio.rules
+sudo install -m644 99-fiio.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
+
+From a clone, the file is already there as `packaging/99-fiio.rules`.
 
 Then re-plug the DAC. On macOS and Windows no setup is needed.
 
@@ -316,10 +330,10 @@ traffic. `fiioctl devices` and `fiioctl info` report which profile was matched.
 
 ## TODO
 
-- **Firmware flashing** (v2). The app's `update-firmware` / `kt1213-update`
-  chunks implement it. Left out of v1 deliberately: it is the only operation that
-  can brick the device, so it needs its own verification pass rather than being
-  bundled in with settings control.
+- **Firmware flashing.** The app's `update-firmware` / `kt1213-update` chunks
+  implement it. Held back deliberately: it is the only operation that can brick
+  the device, so it needs its own verification pass rather than being bundled in
+  with settings control.
 - Bluetooth controls (codec selection, pairing) for the BTR/BT11 devices — the
   commands live in the app's `bt11-cmd` and `tengtai-controller` chunks.
 - The dynamics processor (compressor/limiter) commands, 53–57.
