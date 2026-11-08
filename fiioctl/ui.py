@@ -14,6 +14,8 @@ repaints from that, so editing stays responsive instead of waiting for a
 read-back after every keystroke.
 """
 
+import contextlib
+import functools
 import threading
 
 from textual import work
@@ -59,9 +61,43 @@ LABELS = {
     "mic-monitor-volume": "sidetone volume", "mic-nr": "mic noise reduction",
 }
 BAND_COLUMNS = ["frequency", "gain", "Q", "filter"]
+
+#: band column -> (current value, one step, ten steps) as the hint line shows
+#: them. One table rather than three dicts keyed the same way.
+BAND_FIELDS = {
+    "frequency": lambda b: (f"{b['freq']} Hz", f"{freq_step(b['freq'])} Hz",
+                            f"{freq_step(b['freq']) * 10} Hz"),
+    "gain": lambda b: (f"{b['gain']:+.1f} dB", "0.5 dB", "5 dB"),
+    "Q": lambda b: (f"{b['q']:.2f}", "0.05", "0.5"),
+    "filter": lambda b: (b["filter"], None, None),
+}
 FILTER_CYCLE = list(proto.FILTERS)
 PAGES = [("device", "1  Device"), ("eq", "2  Equaliser"),
          ("slots", "3  EQ slots"), ("lib", "4  Library")]
+
+
+def reporting(fn):
+    """Send a worker's failure to the status line instead of killing the app.
+
+    Every worker previously carried its own try/except doing exactly this, and
+    each guessed differently at which exceptions to expect - so an unanticipated
+    one took the whole UI down. A background worker wants the broad catch: the
+    user needs to see what went wrong and keep going.
+    """
+    @functools.wraps(fn)
+    def inner(self, *args, **kwargs):
+        try:
+            return fn(self, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - deliberate, see docstring
+            self.call_from_thread(self._status, str(exc), True)
+            return None
+    return inner
+
+
+def cycle(options, value, direction):
+    """The next option along, wrapping at either end."""
+    index = options.index(value) if value in options else 0
+    return options[(index + (1 if direction > 0 else -1)) % len(options)]
 
 
 def freq_step(value):
@@ -177,6 +213,12 @@ class FiioApp(App):
         with self._lock:
             return fn(*args, **kwargs)
 
+    def _read_bands(self):
+        """(count, bands) straight from the device. Runs on a worker thread."""
+        count = self._io(self.dac.band_count)
+        bands = [b for b in (self._io(self.dac.get_band, i) for i in range(count)) if b]
+        return count, bands
+
     def _status(self, text, error=False):
         fw = self.settings.get("firmware", "?")
         name = self.dac.info.get("product_string") or self.spec.name
@@ -223,6 +265,7 @@ class FiioApp(App):
         self.reload()
 
     @work(thread=True, group="io")
+    @reporting
     def reload(self):
         values, caps = {}, set(self.spec.caps)
         names = ["firmware"] + ORDER + [
@@ -241,8 +284,7 @@ class FiioApp(App):
                 continue
         bands, names_by_slot = [], {}
         try:
-            count = self._io(self.dac.band_count)
-            bands = [b for b in (self._io(self.dac.get_band, i) for i in range(count)) if b]
+            bands = self._read_bands()[1]
         except FiioError as exc:
             self.call_from_thread(self._status, str(exc), True)
         for slot in self.spec.name_slots:
@@ -304,34 +346,34 @@ class FiioApp(App):
         self._paint_slots()
         self._refresh_hint()
 
-    @staticmethod
-    def _keep_cursor(table, rows, column=0):
+    @contextlib.contextmanager
+    def _rebuilt(self, selector, min_column=0):
+        """Clear a table, let the caller refill it, and keep the cursor put.
+
+        Rebuilding a DataTable resets its cursor, which would yank the selection
+        out from under whoever is holding an arrow key down.
+        """
+        table = self.query_one(selector, DataTable)
         before = table.cursor_coordinate
-        if rows:
+        table.clear()
+        yield table
+        if table.row_count:
             table.cursor_coordinate = Coordinate(
-                min(before.row, rows - 1), max(column, min(before.column, 4))
+                min(before.row, table.row_count - 1),
+                max(min_column, min(before.column, 4)),
             )
 
     def _paint_settings(self):
-        table = self.query_one("#settings", DataTable)
-        before = table.cursor_coordinate
-        table.clear()
-        for name in self._setting_rows():
-            table.add_row(LABELS.get(name, name), self._format(name, self.settings[name]))
-        if table.row_count:
-            table.cursor_coordinate = Coordinate(min(before.row, table.row_count - 1), 0)
+        with self._rebuilt("#settings") as table:
+            for name in self._setting_rows():
+                table.add_row(LABELS.get(name, name),
+                              self._format(name, self.settings[name]))
 
     def _paint_bands(self):
-        table = self.query_one("#bands", DataTable)
-        before = table.cursor_coordinate
-        table.clear()
-        for b in self.bands:
-            table.add_row(str(b["index"]), f"{b['freq']} Hz", f"{b['gain']:+.1f} dB",
-                          f"{b['q']:.2f}", b["filter"])
-        if table.row_count:
-            table.cursor_coordinate = Coordinate(
-                min(before.row, table.row_count - 1), max(1, min(before.column, 4))
-            )
+        with self._rebuilt("#bands", min_column=1) as table:
+            for b in self.bands:
+                table.add_row(str(b["index"]), f"{b['freq']} Hz", f"{b['gain']:+.1f} dB",
+                              f"{b['q']:.2f}", b["filter"])
         gain = self.settings.get("eq-gain")
         head = f"global gain {gain:+.1f} dB" if isinstance(gain, (int, float)) else ""
         body = "\n".join(
@@ -347,16 +389,13 @@ class FiioApp(App):
         self._show_preview()
 
     def _paint_slots(self):
-        table = self.query_one("#slots", DataTable)
-        before = table.cursor_coordinate
-        table.clear()
         active = self.settings.get("eq-preset")
-        for label, value in sorted(self.spec.presets.items(), key=lambda kv: kv[1]):
-            name = self.slot_names.get(value) or label
-            kind = "user" if value in self.spec.name_slots else "factory"
-            table.add_row(f"{value}", name, ("active  " if value == active else "") + kind)
-        if table.row_count:
-            table.cursor_coordinate = Coordinate(min(before.row, table.row_count - 1), 0)
+        with self._rebuilt("#slots") as table:
+            for label, value in sorted(self.spec.presets.items(), key=lambda kv: kv[1]):
+                name = self.slot_names.get(value) or label
+                kind = "user" if value in self.spec.name_slots else "factory"
+                table.add_row(f"{value}", name,
+                              ("active  " if value == active else "") + kind)
 
     def _refresh_hint(self):
         # ListView.Highlighted and Resize both fire while the screen is still
@@ -444,12 +483,7 @@ class FiioApp(App):
                 return None
             band = self.bands[coord.row]
             field = BAND_COLUMNS[max(1, coord.column) - 1]
-            shown = {"frequency": f"{band['freq']} Hz", "gain": f"{band['gain']:+.1f} dB",
-                     "Q": f"{band['q']:.2f}", "filter": band["filter"]}[field]
-            step = {"frequency": f"{freq_step(band['freq'])} Hz", "gain": "0.5 dB",
-                    "Q": "0.05", "filter": None}[field]
-            big = {"frequency": f"{freq_step(band['freq']) * 10} Hz", "gain": "5 dB",
-                   "Q": "0.5", "filter": None}[field]
+            shown, step, big = BAND_FIELDS[field](band)
             return {"kind": "band", "index": band["index"], "field": field,
                     "what": f"band {band['index']} · {field}", "shown": shown,
                     "step": step, "big": big}
@@ -496,15 +530,12 @@ class FiioApp(App):
     def _nudge_setting(self, name, direction):
         value = self.settings[name]
         cmd = registry.COMMANDS[name]
+        # presets and enums both cycle their declared options; the firmware
+        # rejects anything outside them
         if name == "eq-preset":
-            options = sorted(set(self.spec.presets.values()))
-            idx = options.index(value) if value in options else 0
-            new = options[(idx + (1 if direction > 0 else -1)) % len(options)]
+            new = cycle(sorted(set(self.spec.presets.values())), value, direction)
         elif cmd.enum:
-            # cycle the declared options; the firmware rejects anything else
-            options = sorted(set(cmd.enum.values()))
-            idx = options.index(value) if value in options else 0
-            new = options[(idx + (1 if direction > 0 else -1)) % len(options)]
+            new = cycle(sorted(set(cmd.enum.values())), value, direction)
         elif cmd.codec == "bool":
             new = not value
         else:
@@ -538,8 +569,7 @@ class FiioApp(App):
             band["q"] = round(max(lo, min(hi, band["q"] + 0.05 * direction)), 2)
         else:
             current = band["filter"] if band["filter"] in FILTER_CYCLE else "peak"
-            idx = FILTER_CYCLE.index(current)
-            band["filter"] = FILTER_CYCLE[(idx + (1 if direction > 0 else -1)) % len(FILTER_CYCLE)]
+            band["filter"] = cycle(FILTER_CYCLE, current, direction)
         if band == before:
             return
         self.undo_stack.append((f"band {index} {field}", ("band", index, before)))
@@ -552,22 +582,16 @@ class FiioApp(App):
         self.push_band(band)
 
     @work(thread=True, group="io")
+    @reporting
     def push_setting(self, name, value):
-        try:
-            self._io(self.dac.set, name, value)
-        except (FiioError, ValueError) as exc:
-            self.call_from_thread(self._status, str(exc), True)
-            return
+        self._io(self.dac.set, name, value)
         self.call_from_thread(self._status, f"{LABELS.get(name, name)} = {value}")
 
     @work(thread=True, group="io")
+    @reporting
     def push_band(self, band):
-        try:
-            self._io(self.dac.set_band, band["index"], band["freq"], band["gain"],
-                     band["q"], band["filter"])
-        except (FiioError, ValueError, KeyError) as exc:
-            self.call_from_thread(self._status, str(exc), True)
-            return
+        self._io(self.dac.set_band, band["index"], band["freq"], band["gain"],
+                 band["q"], band["filter"])
         self.call_from_thread(
             self._status,
             f"band {band['index']}: {band['freq']} Hz {band['gain']:+.1f} dB "
@@ -612,14 +636,10 @@ class FiioApp(App):
         self.load_bands_after_switch()
 
     @work(thread=True, group="io")
+    @reporting
     def load_bands_after_switch(self):
-        try:
-            count = self._io(self.dac.band_count)
-            bands = [b for b in (self._io(self.dac.get_band, i) for i in range(count)) if b]
-            gain = self._io(self.dac.get, "eq-gain")
-        except FiioError as exc:
-            self.call_from_thread(self._status, str(exc), True)
-            return
+        bands = self._read_bands()[1]
+        gain = self._io(self.dac.get, "eq-gain")
         self.call_from_thread(self._after_switch, bands, gain)
 
     def _after_switch(self, bands, gain):
@@ -646,12 +666,9 @@ class FiioApp(App):
         self.save_to(slot)
 
     @work(thread=True, group="io")
+    @reporting
     def save_to(self, slot):
-        try:
-            self._io(self.dac.set, "eq-save", slot)
-        except FiioError as exc:
-            self.call_from_thread(self._status, str(exc), True)
-            return
+        self._io(self.dac.set, "eq-save", slot)
         self.call_from_thread(self._status, f"saved current EQ to slot {slot}")
 
     def action_rename(self):
@@ -669,12 +686,9 @@ class FiioApp(App):
         self._refresh_hint()
 
     @work(thread=True, group="io")
+    @reporting
     def push_name(self, slot, text):
-        try:
-            clean = self._io(self.dac.set_preset_name, slot, text)
-        except (FiioError, ValueError) as exc:
-            self.call_from_thread(self._status, str(exc), True)
-            return
+        clean = self._io(self.dac.set_preset_name, slot, text)
         self.call_from_thread(self._after_rename, slot, clean)
 
     def _after_rename(self, slot, clean):
@@ -712,6 +726,7 @@ class FiioApp(App):
                 self.push_name(picked[0], event.value.strip())
 
     @work(thread=True, group="net")
+    @reporting
     def run_search(self, query):
         """Search all three sources: FiiO presets, FiiO measurements, AutoEq."""
         found, problems = [], []
@@ -800,13 +815,9 @@ class FiioApp(App):
         panel.update(f"{head}\n{body}" + (f"\n{note[:160]}" if note else ""))
 
     @work(thread=True, group="net")
+    @reporting
     def fetch_preview(self, entry):
-        count = len(self.bands) or 10
-        try:
-            self._resolve(entry, count)
-        except (OSError, ValueError, FiioError, Exception) as exc:  # noqa: BLE001
-            self.call_from_thread(self._status, f"preview failed: {exc}", True)
-            return
+        self._resolve(entry, len(self.bands) or 10)
         self.call_from_thread(self._adopt_preview, entry)
 
     def _adopt_preview(self, entry):
@@ -816,22 +827,19 @@ class FiioApp(App):
             self._show_preview()
 
     @work(thread=True, group="io")
+    @reporting
     def apply_profile(self, entry):
-        try:
-            count = self._io(self.dac.band_count)
-            self._resolve(entry, count)
-            lo, hi = self.spec.gain_range
-            preamp = max(lo, min(hi, float(entry.get("preamp") or 0.0)))
-            self._io(self.dac.set, "eq-gain", preamp)
-            chosen = entry["bands"][:count]
-            for i, b in enumerate(chosen):
-                self._io(self.dac.set_band, i, b["freq"], max(lo, min(hi, b["gain"])),
-                         b["q"], b["filter"])
-            for i in range(len(chosen), count):
-                self._io(self.dac.set_band, i, 1000, 0.0, 0.7, "peak")
-        except (FiioError, OSError, ValueError) as exc:
-            self.call_from_thread(self._status, str(exc), True)
-            return
+        count = self._io(self.dac.band_count)
+        self._resolve(entry, count)
+        lo, hi = self.spec.gain_range
+        preamp = max(lo, min(hi, float(entry.get("preamp") or 0.0)))
+        self._io(self.dac.set, "eq-gain", preamp)
+        chosen = entry["bands"][:count]
+        for i, b in enumerate(chosen):
+            self._io(self.dac.set_band, i, b["freq"], max(lo, min(hi, b["gain"])),
+                     b["q"], b["filter"])
+        for i in range(len(chosen), count):
+            self._io(self.dac.set_band, i, 1000, 0.0, 0.7, "peak")
         self.call_from_thread(self._after_apply, entry, chosen, preamp, count)
 
     def _after_apply(self, entry, chosen, preamp, count):
