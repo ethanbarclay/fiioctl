@@ -11,7 +11,7 @@ import json
 import os
 import sys
 
-from . import curve, eqdb, proto, registry
+from . import __version__, curve, eqdb, proto, registry
 from .device import Dac, FiioError, candidates
 
 EXIT_OK, EXIT_USAGE, EXIT_DEVICE, EXIT_DATA = 0, 2, 3, 4
@@ -692,6 +692,7 @@ def build_parser():
     p = argparse.ArgumentParser(
         prog="fiioctl", description="Control FiiO USB DACs over HID.",
         epilog="Run 'fiioctl schema' for a machine-readable description of every command.")
+    p.add_argument("--version", action="version", version=f"fiioctl {__version__}")
     p.add_argument("--json", action="store_true", help="emit JSON")
     p.add_argument("--trace", action="store_true", help="log every HID packet to stdout")
     p.add_argument("--serial", help="select device by USB serial number")

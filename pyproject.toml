@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiioctl"
-version = "0.1.0"
+# the version lives in fiioctl/__init__.py so the CLI and the package cannot
+# drift apart
+dynamic = ["version"]
 description = "Minimal, extensible CLI for controlling FiiO USB DACs over HID"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -50,6 +52,9 @@ dev = ["pytest>=9", "pytest-asyncio>=1.4", "textual>=8.0", "cryptography>=44"]
 
 [project.scripts]
 fiioctl = "fiioctl.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "fiioctl.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["fiioctl*"]
