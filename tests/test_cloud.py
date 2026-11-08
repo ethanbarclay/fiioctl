@@ -1,8 +1,67 @@
-"""FiiO catalogue helpers. Pure functions only - no network."""
+"""FiiO catalogue helpers. No network: the one HTTP test stubs urlopen."""
+
+import urllib.error
+import urllib.request
 
 import pytest
 
 from fiioctl import cloud
+
+
+class _Reply:
+    """Minimal stand-in for what urlopen returns."""
+
+    def __init__(self, body):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+def test_non_json_reply_is_explained_not_leaked(monkeypatch):
+    """The service answers 200 with an empty body for an unknown measurement id.
+    That used to surface as json's own "Expecting value: line 1 column 1", which
+    tells a user nothing."""
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: _Reply(b""))
+    with pytest.raises(cloud.CloudError, match="non-JSON"):
+        cloud._get("https://example.invalid/measurement/detail?id=999999")
+
+
+def test_non_json_reply_quotes_what_came_back(monkeypatch):
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *_a, **_k: _Reply(b"<html>nope</html>"))
+    with pytest.raises(cloud.CloudError, match="nope"):
+        cloud._get("https://example.invalid/thing")
+
+
+def test_valid_json_still_parses(monkeypatch):
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *_a, **_k: _Reply(b'{"id": 714}'))
+    assert cloud._get("https://example.invalid/thing") == {"id": 714}
+
+
+def test_http_error_names_the_status(monkeypatch):
+    def boom(*_a, **_k):
+        raise urllib.error.HTTPError("https://example.invalid", 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(cloud.CloudError, match="HTTP 404"):
+        cloud._get("https://example.invalid/thing")
+
+
+def test_unreachable_host_is_reported(monkeypatch):
+    def boom(*_a, **_k):
+        raise OSError("name resolution failed")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(cloud.CloudError, match="unreachable"):
+        cloud._get("https://example.invalid/thing")
 
 
 def test_preset_rows_convert_to_profiles():

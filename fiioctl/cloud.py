@@ -161,11 +161,18 @@ def _get(url):
                       "Referer": "https://fiiocontrol.fiio.com/equalizer/auto-eq"})
     try:
         with urllib.request.urlopen(request, timeout=90) as resp:
-            return json.loads(resp.read().decode("utf-8", "replace"))
+            body = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         raise CloudError(f"FiiO returned HTTP {exc.code} for {url}") from exc
     except OSError as exc:
         raise CloudError(f"FiiO unreachable: {exc}") from exc
+    try:
+        return json.loads(body)
+    except ValueError as exc:
+        # the service answers 200 with a non-JSON body for some bad inputs, such
+        # as a measurement id that does not exist
+        raise CloudError(f"FiiO returned a non-JSON reply for {url}: "
+                         f"{body[:120]!r}") from exc
 
 
 def _cached(name, url, refresh=False, ttl=INDEX_TTL):
@@ -374,7 +381,9 @@ def auto_eq(measurement_id, target_id=None, bands=10, **overrides):
         "name": name,
         "source": f"fiio-autoeq/{meas.get('source') or '?'}",
         "rig": meas.get("rig") or "",
-        "description": f"target: {target.get('label', target_id)}",
+        # the single place the chosen target is described, so callers that print
+        # a profile do not each append their own version of it
+        "description": f"target: {target.get('label', target_id)} (id {target_id})",
         "downloads": 0,
         "preamp": -round(max(0.0, peak), 1),
         "bands": out_bands,
