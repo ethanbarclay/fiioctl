@@ -458,3 +458,68 @@ async def test_reload_never_writes(dac):
         await pilot.press("r")
         await ready(app, pilot)
         assert dac.writes == []
+
+
+# -- worker failures ----------------------------------------------------------
+
+
+async def test_unanticipated_worker_failure_is_reported_not_fatal(dac, monkeypatch):
+    """What @reporting exists for.
+
+    `save_to` previously caught only FiioError, so anything else - here a
+    RuntimeError, which no worker's old except tuple listed - took the whole app
+    down instead of reaching the status line.
+    """
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+
+        original = dac.set
+
+        def refuse(name, value):
+            if name == "eq-save":
+                raise RuntimeError("firmware said no")
+            return original(name, value)
+
+        monkeypatch.setattr(dac, "set", refuse)
+
+        await select_slot(app, pilot, 8)
+        await pilot.press("s")
+        assert await until(app, pilot, lambda: "firmware said no" in app.sub_title)
+        assert app.is_running
+
+
+async def test_the_app_still_works_after_a_worker_fails(dac, monkeypatch):
+    """Reporting a failure must not leave the UI wedged."""
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+
+        original = dac.set
+
+        def refuse(name, value):
+            if name == "eq-save":
+                raise RuntimeError("nope")
+            return original(name, value)
+
+        monkeypatch.setattr(dac, "set", refuse)
+        await select_slot(app, pilot, 8)
+        await pilot.press("s")
+        assert await until(app, pilot, lambda: "nope" in app.sub_title)
+
+        # a normal edit still goes through afterwards
+        await select_band(app, pilot, 0, 2)
+        await pilot.press("plus")
+        assert await until(app, pilot, lambda: any(w[0] == "band" for w in dac.writes))
+
+
+async def test_a_failing_read_does_not_stop_the_reload(dac, monkeypatch):
+    """reload() gained the decorator too; a broken read must not kill startup."""
+    def refuse(_name, timeout=None):
+        raise RuntimeError("read exploded")
+
+    monkeypatch.setattr(dac, "get", refuse)
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        assert app.is_running
