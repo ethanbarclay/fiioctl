@@ -274,7 +274,8 @@ def cmd_eq_apply(args):
         emit({"error": str(exc)}, args.json, f"could not load profile: {exc}")
         return EXIT_DATA
     with connect(args) as dac:
-        out = {"profile": entry["name"], "source": entry["source"], **_apply_profile(dac, prof, args)}
+        out = {"profile": entry["name"], "source": entry["source"],
+               **_apply_profile(dac, prof, args)}
     emit(out, args.json, f"applied '{entry['name']}' ({entry['source']}): "
          f"{out['applied']} bands, preamp {out['preamp']:+.1f} dB"
          + (f", dropped {len(out['dropped'])} (device has {out['applied']} bands)"
@@ -284,7 +285,8 @@ def cmd_eq_apply(args):
 
 def cmd_peq_import(args):
     try:
-        prof = eqdb.parse(open(args.file, encoding="utf-8").read())
+        with open(args.file, encoding="utf-8") as fh:
+            prof = eqdb.parse(fh.read())
     except (OSError, ValueError) as exc:
         emit({"error": str(exc)}, args.json, f"cannot read profile: {exc}")
         return EXIT_DATA
@@ -355,7 +357,6 @@ def cmd_scan(args):
     with connect(args) as dac:
         found = dac.scan(limit=args.max, timeout=args.timeout)
         product = dac.info.get("product_string")
-    snapshot = {hex(c): p.hex(" ") for c, p in found.items()}
 
     if args.save:
         with open(args.save, "w", encoding="utf-8") as fh:
@@ -630,7 +631,8 @@ def cmd_schema(args):
             "exit_codes": {"ok": EXIT_OK, "usage": EXIT_USAGE,
                            "device": EXIT_DEVICE, "data": EXIT_DATA},
             "batch_protocol": {
-                "stdin": 'one JSON object per line: {"op":"get|set|band|raw","name":...,"value":...}',
+                "stdin": ('one JSON object per line: '
+                          '{"op":"get|set|band|raw","name":...,"value":...}'),
                 "stdout": "one JSON object per line, with an 'ok' boolean",
             },
         },
@@ -701,8 +703,10 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", metavar="COMMAND")
     p.set_defaults(fn=_group_help(p))
 
-    sub.add_parser("devices", help="list connected FiiO HID interfaces").set_defaults(fn=cmd_devices)
-    sub.add_parser("info", help="identify the device and its capabilities").set_defaults(fn=cmd_info)
+    sub.add_parser("devices", help="list connected FiiO HID interfaces"
+                   ).set_defaults(fn=cmd_devices)
+    sub.add_parser("info", help="identify the device and its capabilities"
+                   ).set_defaults(fn=cmd_info)
     st = sub.add_parser("state", help="read every supported setting")
     st.add_argument("--all", action="store_true", help="probe commands outside the capability list")
     st.set_defaults(fn=cmd_state)
@@ -821,7 +825,8 @@ def build_parser():
     rw.set_defaults(fn=cmd_raw)
 
     sub.add_parser("ui", help="interactive terminal UI").set_defaults(fn=cmd_ui)
-    sub.add_parser("schema", help="dump the protocol/command model as JSON").set_defaults(fn=cmd_schema)
+    sub.add_parser("schema", help="dump the protocol/command model as JSON"
+                   ).set_defaults(fn=cmd_schema)
     sub.add_parser("batch", help="stream JSON operations from stdin").set_defaults(fn=cmd_batch)
     return p
 

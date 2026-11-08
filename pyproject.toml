@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,10 +8,36 @@ version = "0.1.0"
 description = "Minimal, extensible CLI for controlling FiiO USB DACs over HID"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+# PEP 639: an SPDX expression, not the deprecated table form
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ethan Barclay" }]
+keywords = ["fiio", "usb-dac", "hid", "equalizer", "parametric-eq", "autoeq", "audio"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Sound/Audio",
+  "Topic :: System :: Hardware :: Universal Serial Bus (USB)",
+]
+
 # cython-hidapi: provides the `hid` module and bundles the hidapi library in its
 # wheels. NOT the similarly named `hid` distribution, which has a different API.
 dependencies = ["hidapi>=0.15"]
+
+[project.urls]
+Homepage = "https://github.com/ethanbarclay/fiioctl"
+Repository = "https://github.com/ethanbarclay/fiioctl"
+Issues = "https://github.com/ethanbarclay/fiioctl/issues"
+Protocol = "https://github.com/ethanbarclay/fiioctl/blob/main/docs/PROTOCOL.md"
 
 # Floors are set to the versions actually exercised by the test suite rather than
 # to the oldest that might work. Textual in particular made breaking changes
@@ -27,6 +53,20 @@ fiioctl = "fiioctl.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["fiioctl*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Deliberately not ruff's full default: these catch real problems (unused names,
+# undefined references, leaked file handles, bad imports) without turning CI into
+# a style argument.
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# the test modules import after a pytest.importorskip, which is the point
+"tests/*" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

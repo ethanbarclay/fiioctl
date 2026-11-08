@@ -23,7 +23,15 @@ from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.widgets import (
-    ContentSwitcher, DataTable, Footer, Header, Input, Label, ListItem, ListView, Static,
+    ContentSwitcher,
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Static,
 )
 
 from . import curve, eqdb, proto, registry

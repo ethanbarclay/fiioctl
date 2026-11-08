@@ -81,7 +81,8 @@ CODECS = {
     "x100": (lambda v: _u16(round(float(v) * 100)), lambda b: int.from_bytes(b[:2], "big") / 100),
     "bool": (_enc_bool, lambda b: bool(b[0])),
     "balance": (_enc_balance, _dec_balance),
-    "text": (lambda v: str(v).encode("utf-8"), lambda b: b.rstrip(b"\x00").decode("utf-8", "replace")),
+    "text": (lambda v: str(v).encode("utf-8"),
+             lambda b: b.rstrip(b"\x00").decode("utf-8", "replace")),
     "version": (None, _dec_version),
     "raw": (bytes, lambda b: b.hex()),
 }
