@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fiioctl"
+version = "0.1.0"
+description = "Minimal, extensible CLI for controlling FiiO USB DACs over HID"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# cython-hidapi: provides the `hid` module and bundles the hidapi library in its
+# wheels. NOT the similarly named `hid` distribution, which has a different API.
+dependencies = ["hidapi>=0.15"]
+
+# Floors are set to the versions actually exercised by the test suite rather than
+# to the oldest that might work. Textual in particular made breaking changes
+# across its 1.x-8.x majors, so claiming >=0.80 would be an untested assertion.
+[project.optional-dependencies]
+ui = ["textual>=8.0"]
+cloud = ["cryptography>=44"]
+all = ["textual>=8.0", "cryptography>=44"]
+dev = ["pytest>=9", "pytest-asyncio>=1.4", "textual>=8.0", "cryptography>=44"]
+
+[project.scripts]
+fiioctl = "fiioctl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fiioctl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
