@@ -140,12 +140,20 @@ def cmd_set(args):
 
 def cmd_eq_preset(args):
     with connect(args) as dac:
+        # Dac.set resolves preset names itself, so there is one place that knows
+        # how a device's slots are named
         if args.value is None:
-            emit({"eq-preset": dac.get("eq-preset")}, args.json)
-            return EXIT_OK
-        value = dac.spec.presets.get(str(args.value).lower(), args.value)
-        dac.set("eq-preset", value)
-        emit({"eq-preset": int(value), "written": True}, args.json, f"eq-preset = {value}")
+            value, written = dac.get("eq-preset"), False
+        else:
+            value, written = dac.set("eq-preset", args.value, verify=True), True
+        name = next((k for k, v in dac.spec.presets.items() if v == value), None)
+    out = {"eq-preset": value}
+    if name:
+        out["label"] = name
+    if written:
+        out["written"] = True
+    human = f"{name} ({value})" if name else str(value)
+    emit(out, args.json, f"eq-preset = {human}" if written else human)
     return EXIT_OK
 
 

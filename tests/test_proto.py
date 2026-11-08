@@ -115,6 +115,29 @@ def test_preset_rejects_slots_the_device_does_not_have():
     assert dac.set("eq-preset", 9) == 9
 
 
+def test_preset_accepts_the_names_the_device_advertises():
+    """`set eq-preset user1` must work, since the error text promises names do."""
+    dac = _dry()
+    assert dac.set("eq-preset", "user1") == 7
+    assert dac.set("eq-preset", "USER1") == 7
+    assert dac.set("eq-preset", "off") == 10
+    assert dac.set("eq-preset", 7) == 7
+
+
+def test_preset_name_error_lists_the_names():
+    from fiioctl.device import FiioError
+    dac = _dry()
+    with pytest.raises(FiioError, match="user1"):
+        dac.set("eq-preset", "nonsense")
+
+
+def test_dry_run_never_tries_to_read_back():
+    """--dry-run builds packets with no device, so verification must be skipped."""
+    dac = _dry()
+    assert dac.set("volume", 30, verify=True) == 30
+    assert dac.set("language", "english", verify=True) == 1
+
+
 def test_range_still_enforced():
     from fiioctl.device import FiioError
     dac = _dry()
@@ -128,13 +151,15 @@ def test_verify_reports_what_the_device_actually_holds():
     from fiioctl.device import Dac, FiioError
 
     class Clamping(Dac):
+        """Not dry: verification is skipped on a dry connection by design."""
+
         def send(self, cmd, data=b"", hdr=None):
             pass
 
         def get(self, name, timeout=None):
             return 10  # whatever was asked for, the device lands on 10
 
-    dac = Clamping(None, {}, registry.KA15, dry=True)
+    dac = Clamping(None, {}, registry.KA15)
     assert dac.set("eq-preset", 10, verify=True) == 10
     with pytest.raises(FiioError, match="device holds 10"):
         dac.set("eq-preset", 9, verify=True)

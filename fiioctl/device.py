@@ -218,11 +218,16 @@ class Dac:
             return number
 
         if name == "eq-preset" and self.spec.presets:
+            # preset names are per-device, so they live on the spec rather than
+            # in Cmd.enum; resolve one before trying to read a number
+            if isinstance(value, str) and value.strip().lower() in self.spec.presets:
+                return self.spec.presets[value.strip().lower()]
             try:
                 number = int(value)
             except (TypeError, ValueError):
-                raise FiioError(f"eq-preset must be a number or a preset name; "
-                                f"got {value!r}") from None
+                valid = ", ".join(sorted(self.spec.presets))
+                raise FiioError(f"eq-preset {value!r} is not a number or a preset "
+                                f"name; names: {valid}") from None
             if number not in set(self.spec.presets.values()):
                 valid = ", ".join(f"{k} ({v})" for k, v in
                                   sorted(self.spec.presets.items(), key=lambda kv: kv[1]))
@@ -257,7 +262,9 @@ class Dac:
         self.send(cmd.id, payload)
         # Report the value as it went over the wire, not as it was typed.
         sent = proto.CODECS[cmd.codec][1](payload)
-        if not verify or not cmd.readable:
+        # a dry run has nothing to read back from, and verifying would turn a
+        # command that only builds packets into an error
+        if not verify or not cmd.readable or self.dry:
             return sent
         actual = self.get(name)
         if actual != sent:
