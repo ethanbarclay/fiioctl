@@ -151,6 +151,10 @@ jobs:
     # can be judged on what it left untested.
     name: coverage
     runs-on: ubuntu-latest
+    # Informational for real: the suite already runs as a gate in `test`, so a
+    # failure here would be a duplicate signal that could block a merge if
+    # these checks are ever made required.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
