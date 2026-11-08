@@ -1,6 +1,10 @@
 name: CI
 
 on:
+  # Push is filtered to main on purpose. A branch with an open pull request is
+  # already covered by the pull_request trigger, so listening for both would run
+  # the whole matrix twice for every push to a PR branch. A branch with no PR
+  # yet can be run on demand through workflow_dispatch.
   push:
     branches: [main]
   pull_request:
