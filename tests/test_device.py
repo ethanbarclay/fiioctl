@@ -172,3 +172,12 @@ def test_apply_with_save_refuses_a_factory_slot_before_writing_anything(capsys):
     with pytest.raises(FiioError, match="factory preset"):
         cli._apply_profile(_dry(), prof, SimpleNamespace(slot="rock", save=True))
     assert "aa 0a" not in "".join(capsys.readouterr())  # the SET header
+
+
+# -- applying -----------------------------------------------------------------
+
+
+def test_write_profile_reports_what_the_wire_can_carry():
+    bands = [{"freq": 100.4, "gain": 2.7524, "q": 0.5779, "filter": "peak"}]
+    _, written = _dry().write_profile(-3.0, bands, 1)
+    assert written == [{"index": 0, "freq": 100, "gain": 2.8, "q": 0.58, "filter": "peak"}]
