@@ -278,6 +278,25 @@ class Dac:
         decode = proto.CODECS[cmd.codec][1]
         return decode(self.request(cmd.id, timeout=timeout))
 
+    def resolve_preset(self, value):
+        """The slot number a preset name or number refers to on this device."""
+        # preset names are per-device, so they live on the spec rather than in
+        # Cmd.enum; resolve one before trying to read a number
+        if isinstance(value, str) and value.strip().lower() in self.spec.presets:
+            return self.spec.presets[value.strip().lower()]
+        try:
+            number = int(value)
+        except (TypeError, ValueError, OverflowError):
+            valid = ", ".join(sorted(self.spec.presets))
+            raise FiioError(f"eq-preset {value!r} is not a number or a preset "
+                            f"name; names: {valid}") from None
+        if number not in set(self.spec.presets.values()):
+            valid = ", ".join(f"{k} ({v})" for k, v in
+                              sorted(self.spec.presets.items(), key=lambda kv: kv[1]))
+            raise FiioError(f"eq-preset {number} is not a slot on this device; "
+                            f"valid: {valid}")
+        return number
+
     def _coerce(self, name, cmd, value):
         """Resolve a value to something the device will actually accept.
 
@@ -301,22 +320,7 @@ class Dac:
             return number
 
         if name == "eq-preset" and self.spec.presets:
-            # preset names are per-device, so they live on the spec rather than
-            # in Cmd.enum; resolve one before trying to read a number
-            if isinstance(value, str) and value.strip().lower() in self.spec.presets:
-                return self.spec.presets[value.strip().lower()]
-            try:
-                number = int(value)
-            except (TypeError, ValueError, OverflowError):
-                valid = ", ".join(sorted(self.spec.presets))
-                raise FiioError(f"eq-preset {value!r} is not a number or a preset "
-                                f"name; names: {valid}") from None
-            if number not in set(self.spec.presets.values()):
-                valid = ", ".join(f"{k} ({v})" for k, v in
-                                  sorted(self.spec.presets.items(), key=lambda kv: kv[1]))
-                raise FiioError(f"eq-preset {number} is not a slot on this device; "
-                                f"valid: {valid}")
-            return number
+            return self.resolve_preset(value)
 
         if name == "eq-gain":
             return self.snap_gain(value)

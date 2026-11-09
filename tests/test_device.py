@@ -231,3 +231,14 @@ def test_a_dry_run_with_save_still_shows_its_writes(capsys):
 def test_eq_save_says_what_a_refused_slot_actually_is(slot, what):
     with pytest.raises(FiioError, match=f"slot {slot} {what}.*save to one of 7, 8, 9"):
         _dry().set("eq-save", slot)
+
+
+def test_slot_is_resolved_like_any_other_preset(capsys):
+    prof = {"preamp": -3.0, "bands": [{"freq": 100, "gain": 1.0, "q": 1.0, "filter": "peak"}]}
+    with pytest.raises(FiioError, match="not a number or a preset name"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot="nonsense", save=False))
+    with pytest.raises(FiioError, match="99 is not a slot on this device"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot="99", save=False))
+    assert "aa 0a" not in "".join(capsys.readouterr())
+    cli._apply_profile(_dry(), prof, SimpleNamespace(slot="USER2", save=False))
+    assert "aa 0a 00 00 16 01 08" in "".join(capsys.readouterr())

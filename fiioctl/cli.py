@@ -252,9 +252,7 @@ def _apply_profile(dac, prof, args):
     count = dac.band_count()
     bands = prof["bands"][:count]
     dropped = prof["bands"][count:]
-    slot = None
-    if args.slot is not None:
-        slot = int(dac.spec.presets.get(str(args.slot).lower(), args.slot))
+    slot = None if args.slot is None else dac.resolve_preset(args.slot)
     save_to = slot
     if args.save:
         # before anything is written, not after the EQ has already changed. A dry
