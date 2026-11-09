@@ -174,6 +174,9 @@ class FiioApp(App):
         self._jobs = collections.deque()
         self._jobs_lock = threading.Lock()
         self._draining = False
+        #: preset switches still queued or running; until they finish, self.bands
+        #: describes a preset the device has left
+        self._switches = 0
         self.settings = {}
         self.bands = []
         self.slot_names = {}
@@ -248,6 +251,11 @@ class FiioApp(App):
         count = self.dac.band_count()
         bands = [b for b in (self.dac.get_band(i) for i in range(count)) if b]
         return count, bands
+
+    def _forget_eq_undo(self):
+        """Drop undo entries for the EQ just replaced: they would write into the new one."""
+        self.undo_stack = [item for item in self.undo_stack
+                           if item[1][0] == "setting" and item[1][1] != "eq-gain"]
 
     def _status(self, text, error=False):
         fw = self.settings.get("firmware", "?")
@@ -328,6 +336,7 @@ class FiioApp(App):
         self.settings = values
         self.bands = bands
         self.slot_names = slot_names
+        self._forget_eq_undo()
         self._status(f"{len(bands)} bands")
         self.repaint()
 
@@ -563,8 +572,9 @@ class FiioApp(App):
         # presets and enums both cycle their declared options; the firmware
         # rejects anything outside them
         if name == "eq-preset":
-            new = cycle(sorted(set(self.spec.presets.values())), value, direction)
-        elif cmd.enum:
+            self._nudge_to_preset(cycle(sorted(set(self.spec.presets.values())), value, direction))
+            return
+        if cmd.enum:
             new = cycle(sorted(set(cmd.enum.values())), value, direction)
         elif cmd.codec == "bool":
             new = not value
@@ -587,6 +597,9 @@ class FiioApp(App):
         self.push_setting(name, new)
 
     def _nudge_band(self, index, field, direction):
+        if self._switches:
+            self._status("still loading the preset")
+            return
         band = dict(self.bands[index])
         before = dict(band)
         if field == "frequency":
@@ -631,7 +644,9 @@ class FiioApp(App):
             self.notify("nothing to undo")
             return
         label, entry = self.undo_stack.pop()
-        if entry[0] == "setting":
+        if entry[0] == "setting" and entry[1] == "eq-preset":
+            self._begin_switch(entry[2])
+        elif entry[0] == "setting":
             _, name, value = entry
             self.settings[name] = value
             self.repaint()
@@ -659,17 +674,29 @@ class FiioApp(App):
         if previous == value:
             return
         self.undo_stack.append(("preset", ("setting", "eq-preset", previous)))
+        self._begin_switch(value)
+
+    def _begin_switch(self, value):
+        self._forget_eq_undo()
         self.settings["eq-preset"] = value
+        self._switches += 1
         self.repaint()
-        self.push_setting("eq-preset", value)
-        self.load_bands_after_switch()
+        self.switch_preset(value)
 
     @device_job
     @reporting
-    def load_bands_after_switch(self):
-        bands = self._read_bands()[1]
-        gain = self.dac.get("eq-gain")
-        self.call_from_thread(self._after_switch, bands, gain)
+    def switch_preset(self, value):
+        # one job, so nothing can be queued between the write and the read
+        try:
+            self.dac.set("eq-preset", value)
+            bands = self._read_bands()[1]
+            gain = self.dac.get("eq-gain")
+            self.call_from_thread(self._after_switch, bands, gain)
+        finally:
+            self.call_from_thread(self._switch_finished)
+
+    def _switch_finished(self):
+        self._switches -= 1
 
     def _after_switch(self, bands, gain):
         self.bands = bands
@@ -872,6 +899,7 @@ class FiioApp(App):
     def _after_apply(self, entry, written, preamp, count):
         self.settings["eq-gain"] = preamp
         self.bands = written
+        self._forget_eq_undo()
         dropped = max(0, len(entry["bands"]) - count)
         self.repaint()
         self.action_page("eq")

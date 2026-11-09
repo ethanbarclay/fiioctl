@@ -378,6 +378,79 @@ async def test_device_writes_land_in_the_order_they_were_made(dac, monkeypatch):
         assert [w[3] for w in dac.writes] == [3.5, 4.0, 4.5, 5.0]
 
 
+class TwoBankDac(FakeDac):
+    """A device whose bands and pre-amp really do change with the preset."""
+
+    def __init__(self):
+        super().__init__()
+        self.banks = {}
+
+    def _other_bank(self, preset):
+        return [{**b, "gain": float(preset)} for b in self.bands]
+
+    def set(self, name, value):
+        if name == "eq-preset":
+            self.banks[self.values["eq-preset"]] = (self.bands, self.values["eq-gain"])
+            self.bands, self.values["eq-gain"] = self.banks.get(
+                value, (self._other_bank(value), float(-value)))
+        return super().set(name, value)
+
+
+async def test_plus_on_the_preset_row_loads_that_presets_bands():
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "eq-preset")
+        await pilot.press("plus")
+        assert await until(app, pilot, lambda: app.bands and app.bands[0]["gain"] == 7.0)
+        assert app.settings["eq-gain"] == -7.0
+        assert app._switches == 0
+        assert not [w for w in dac.writes if w[0] == "band"]
+
+
+async def test_undoing_a_preset_change_reloads_too():
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "eq-preset")
+        await pilot.press("plus")
+        assert await until(app, pilot, lambda: app.bands[0]["gain"] == 7.0)
+        await pilot.press("u")
+        assert await until(app, pilot, lambda: app.bands[0]["gain"] == 3.0)
+        assert dac.values["eq-preset"] == 6
+
+
+async def test_band_undo_does_not_cross_a_preset_switch():
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        await pilot.press("plus")
+        await ready(app, pilot)
+        app._nudge_to_preset(7)
+        assert await until(app, pilot, lambda: app.bands[0]["gain"] == 7.0)
+        dac.writes.clear()
+        await pilot.press("u")     # only the preset switch is left to undo
+        assert await until(app, pilot, lambda: dac.values["eq-preset"] == 6)
+        assert not [w for w in dac.writes if w[0] == "band"]
+
+
+async def test_band_edits_wait_for_a_preset_switch_to_finish():
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        app._switches = 1          # a switch is still in flight
+        await pilot.press("plus")
+        await ready(app, pilot)
+        assert not [w for w in dac.writes if w[0] == "band"]
+        app._switches = 0
+
+
 # -- slots page ---------------------------------------------------------------
 
 
