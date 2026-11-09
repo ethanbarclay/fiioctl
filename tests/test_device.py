@@ -205,3 +205,16 @@ def test_a_named_device_that_will_not_open_is_named(monkeypatch):
     _unopenable(monkeypatch, "FIIO KA15")
     with pytest.raises(FiioError, match="cannot open 'FIIO KA15'"):
         Dac.open()
+
+
+@pytest.mark.parametrize("kwargs", [{"product": "ka15"}, {"serial": "ABC123"}])
+def test_filters_do_not_hide_a_device_with_no_readable_name(monkeypatch, kwargs):
+    _unopenable(monkeypatch, "")
+    with pytest.raises(FiioError, match=r"found a HID device \(2972:0104\).*udev rule"):
+        Dac.open(**kwargs)
+
+
+def test_a_named_device_that_does_not_match_is_still_no_match(monkeypatch):
+    _unopenable(monkeypatch, "FIIO KA17")
+    with pytest.raises(FiioError, match="no FiiO device matched"):
+        Dac.open(product="ka15")

@@ -49,6 +49,18 @@ def _clamp(value, limits):
     return max(lo, min(hi, value))
 
 
+def _unnamed_error(info, detail=""):
+    """Why a device with no readable name cannot be used."""
+    # without permission, hidapi's Linux backend cannot read the name either,
+    # so the model is unknown and no profile can be matched
+    usb_id = f"{info.get('vendor_id', 0):04x}:{info.get('product_id', 0):04x}"
+    return FiioError(
+        f"found a HID device ({usb_id}) but could not read its name{detail}. On Linux "
+        "this usually means the udev rule is not installed (see README); on macOS "
+        "re-plug the device."
+    )
+
+
 def _hid():
     if hid is None:
         raise FiioError("the 'hid' package is not installed: pip install hid")
@@ -120,12 +132,17 @@ class Dac:
             raise FiioError(
                 "no FiiO device found over HID (check the cable, and udev rules "
                 "on Linux)." + hint)
+        found = infos
         if serial:
             infos = [i for i in infos if (i.get("serial_number") or "") == serial]
         if product:
             want = product.upper()
             infos = [i for i in infos if want in (i.get("product_string") or "").upper()]
         if not infos:
+            # filtering cannot match a name or serial that could not be read
+            unnamed = next((i for i in found if not i.get("product_string")), None)
+            if unnamed:
+                raise _unnamed_error(unnamed)
             raise FiioError(f"no FiiO device matched serial={serial!r} product={product!r}")
         info = _pick(infos)
         spec = registry.match(info.get("product_string"))
@@ -142,14 +159,7 @@ class Dac:
             if dry:
                 return cls(None, info, spec, trace, True)
             if not info.get("product_string"):
-                # without permission, hidapi's Linux backend cannot read the name
-                # either, so the model is unknown and no profile was matched
-                usb_id = f"{info.get('vendor_id', 0):04x}:{info.get('product_id', 0):04x}"
-                raise FiioError(
-                    f"found a HID device ({usb_id}) but could not read its name or open "
-                    f"it: {exc}. On Linux this usually means the udev rule is not "
-                    "installed (see README); on macOS re-plug the device."
-                ) from exc
+                raise _unnamed_error(info, f" or open it: {exc}") from exc
             raise FiioError(
                 f"cannot open {info.get('product_string')!r}: {exc}. "
                 "On Linux install the udev rule (see README); on macOS re-plug the device."
