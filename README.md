@@ -70,14 +70,17 @@ On Linux, allow non-root access to the device. The rule is not part of the
 installed package, so fetch it:
 
 ```bash
-curl -sO https://raw.githubusercontent.com/ethanbarclay/fiioctl/main/packaging/99-fiio.rules
-sudo install -m644 99-fiio.rules /etc/udev/rules.d/
+curl -fsSO https://raw.githubusercontent.com/ethanbarclay/fiioctl/main/packaging/70-fiio.rules
+sudo install -m644 70-fiio.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-From a clone, the file is already there as `packaging/99-fiio.rules`.
+From a clone, the file is already there as `packaging/70-fiio.rules`.
 
 Then re-plug the DAC. On macOS and Windows no setup is needed.
+
+An earlier copy of the rule was named `99-fiio.rules`, which never took effect.
+If you have one, delete it.
 
 ## What it does
 

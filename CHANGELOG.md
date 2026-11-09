@@ -4,6 +4,22 @@ Notable changes per release. Versions follow [semantic versioning](https://semve
 with the caveat that a 0.x line can break its CLI surface between minor versions
 if a protocol finding demands it.
 
+## Unreleased
+
+### Fixed
+
+- The Linux udev rule is now `70-fiio.rules`. Named `99-fiio.rules`, it ran after
+  systemd's `73-seat-late.rules`, so `uaccess` never granted the logged-in user
+  access. Anyone who installed the old file should delete it and install this one.
+- Linux now uses hidapi's hidraw backend. The default libusb one detached the
+  kernel's HID driver on every command, could not read a device's name without
+  permission, and reported no usage page, so the control interface could not be
+  picked by it.
+- Programs using the same device on Linux take turns, so one cannot read another's
+  reply as its own or send a write too soon after another's.
+- A device that will not open is no longer always blamed on the udev rule. On Linux
+  the error says whether the device has gone or the user has no access to it.
+
 ## 0.2.0 - 2026-11-08
 
 Failed writes are now noticed, values a setting cannot hold are refused, the TUI

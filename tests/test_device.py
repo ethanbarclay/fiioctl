@@ -60,6 +60,70 @@ def test_write_that_fails_at_every_length_raises():
         _wired(handle).send(2, b"\x01")
 
 
+# -- sharing a hidraw node ----------------------------------------------------
+
+
+def _reply(value):
+    return list(bytes([7, 0xBB, 0x0B, 0, 0, 2, 1, value, 0, 0xEE]))
+
+
+class SharedHandle(FakeHandle):
+    """A hidraw node with reports already queued for this reader."""
+
+    def __init__(self, events, waiting=(), replies=()):
+        super().__init__()
+        self.events = events
+        self.waiting = list(waiting)
+        self.replies = list(replies)
+
+    def write(self, out):
+        self.events.append("write")
+        return super().write(out)
+
+    def read(self, _size, timeout_ms=0):
+        queue = self.replies if self.sent else self.waiting
+        return queue.pop(0) if queue else []
+
+
+def _shared(monkeypatch, **queues):
+    events = []
+    monkeypatch.setattr(device, "fcntl", SimpleNamespace(
+        LOCK_EX="lock", LOCK_UN="unlock", flock=lambda _fd, op: events.append(op)))
+    dac = _wired(SharedHandle(events, **queues))
+    dac._lock = 5
+    return dac, events
+
+
+def test_another_programs_reply_is_not_taken_for_ours(monkeypatch):
+    dac, _ = _shared(monkeypatch, waiting=[_reply(40)], replies=[_reply(59)])
+    assert dac.request(2) == bytes([59])
+
+
+def test_an_exchange_holds_the_device_throughout(monkeypatch):
+    dac, events = _shared(monkeypatch, replies=[_reply(59)])
+    dac.request(2)
+    assert events == ["lock", "write", "unlock"]
+
+
+def test_the_device_is_held_until_the_next_write_is_safe(monkeypatch):
+    dac, events = _shared(monkeypatch)
+    monkeypatch.setattr(device.time, "sleep", lambda _s: events.append("sleep"))
+    dac.send(2, b"\x01")
+    assert events == ["lock", "write", "sleep", "unlock"]
+
+
+def test_a_failed_exchange_still_lets_go(monkeypatch):
+    dac, events = _shared(monkeypatch)
+    with pytest.raises(FiioError, match="timed out"):
+        dac.request(2, timeout=0.01)
+    assert events[-1] == "unlock"
+
+
+@pytest.mark.parametrize("path", [b"3-6.1:1.0", b"DevSrvsID:4294"])
+def test_only_a_hidraw_node_is_locked(path):
+    assert device._lock_for(path) is None
+
+
 # -- value validation ---------------------------------------------------------
 
 
@@ -186,11 +250,11 @@ def test_write_profile_reports_what_the_wire_can_carry():
 # -- opening ------------------------------------------------------------------
 
 
-def _unopenable(monkeypatch, name):
+def _unopenable(monkeypatch, name, path=b"p"):
     def refuse(_path):
         raise OSError("open failed")
 
-    info = {"vendor_id": 0x2972, "product_id": 0x0104, "product_string": name, "path": b"p"}
+    info = {"vendor_id": 0x2972, "product_id": 0x0104, "product_string": name, "path": path}
     monkeypatch.setattr(device, "hid", SimpleNamespace(
         enumerate=lambda: [info], device=lambda: SimpleNamespace(open_path=refuse)))
 
@@ -205,6 +269,43 @@ def test_a_named_device_that_will_not_open_is_named(monkeypatch):
     _unopenable(monkeypatch, "FIIO KA15")
     with pytest.raises(FiioError, match="cannot open 'FIIO KA15'"):
         Dac.open()
+
+
+@pytest.mark.parametrize("exists, access, message", [
+    (True, False, "no access to /dev/hidraw6.*udev rule"),
+    (True, True, "has access to it.*re-plugging"),
+    (False, False, "/dev/hidraw6 has gone"),
+])
+def test_a_hidraw_node_says_why_it_will_not_open(monkeypatch, exists, access, message):
+    _unopenable(monkeypatch, "FIIO KA15", b"/dev/hidraw6")
+    monkeypatch.setattr(device.os.path, "exists", lambda _p: exists)
+    monkeypatch.setattr(device.os, "access", lambda *_: access)
+    with pytest.raises(FiioError, match=message):
+        Dac.open()
+
+
+def test_a_path_that_cannot_be_inspected_lists_the_likely_causes(monkeypatch):
+    _unopenable(monkeypatch, "FIIO KA15", b"3-6.1:1.0")
+    with pytest.raises(FiioError, match="Another program may be using it.*udev rule"):
+        Dac.open()
+
+
+@pytest.mark.parametrize("platform, available, expected", [
+    ("linux", {"hidraw", "hid"}, "hidraw"),
+    ("linux", {"hid"}, "hid"),
+    ("darwin", {"hidraw", "hid"}, "hid"),
+    ("win32", {"hid"}, "hid"),
+    ("linux", set(), None),
+])
+def test_the_backend_suits_the_platform(monkeypatch, platform, available, expected):
+    def load(name):
+        if name not in available:
+            raise ImportError(name)
+        return name
+
+    monkeypatch.setattr(device.sys, "platform", platform)
+    monkeypatch.setattr(device.importlib, "import_module", load)
+    assert device._backend() == expected
 
 
 @pytest.mark.parametrize("kwargs", [{"product": "ka15"}, {"serial": "ABC123"}])
