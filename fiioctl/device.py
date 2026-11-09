@@ -342,9 +342,16 @@ class Dac:
     def require_user_slot(self, slot):
         """Refuse to save over a factory preset, on models whose user slots are known."""
         slots = self.spec.name_slots
-        if slots and slot not in slots:
-            raise FiioError(f"slot {slot} is a factory preset; save to one of "
-                            f"{', '.join(str(s) for s in slots)}")
+        if not slots or slot in slots:
+            return
+        if slot == self.spec.eq_off:
+            what = "is the EQ-off setting"
+        elif slot in self.spec.presets.values():
+            what = "is a factory preset"
+        else:
+            what = "does not exist on this device"
+        raise FiioError(f"slot {slot} {what}; save to one of "
+                        f"{', '.join(str(s) for s in slots)}")
 
     def set(self, name, value, verify=False):
         """Write a setting. With `verify`, read it back and return what stuck.

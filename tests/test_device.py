@@ -225,3 +225,9 @@ def test_a_dry_run_with_save_still_shows_its_writes(capsys):
     with pytest.raises(FiioError, match="cannot read"):
         cli._apply_profile(_dry(), prof, SimpleNamespace(slot=None, save=True))
     assert "".join(capsys.readouterr()).count("aa 0a") == 1 + 10  # pre-amp and every band
+
+
+@pytest.mark.parametrize("slot, what", [(99, "does not exist"), (10, "is the EQ-off setting")])
+def test_eq_save_says_what_a_refused_slot_actually_is(slot, what):
+    with pytest.raises(FiioError, match=f"slot {slot} {what}.*save to one of 7, 8, 9"):
+        _dry().set("eq-save", slot)
