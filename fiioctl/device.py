@@ -314,7 +314,16 @@ class Dac:
             lo, hi = limits
             if not lo <= float(value) <= hi:
                 raise FiioError(f"{name}={value} outside {lo}..{hi}")
+        if name == "eq-save":
+            self.require_user_slot(value)
         return value
+
+    def require_user_slot(self, slot):
+        """Refuse to save over a factory preset, on models whose user slots are known."""
+        slots = self.spec.name_slots
+        if slots and slot not in slots:
+            raise FiioError(f"slot {slot} is a factory preset; save to one of "
+                            f"{', '.join(str(s) for s in slots)}")
 
     def set(self, name, value, verify=False):
         """Write a setting. With `verify`, read it back and return what stuck.

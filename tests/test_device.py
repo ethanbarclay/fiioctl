@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fiioctl import device, registry
+from fiioctl import cli, device, registry
 from fiioctl.device import Dac, FiioError
 
 
@@ -148,3 +148,27 @@ def test_rebadged_controllers_match_on_their_listed_product(monkeypatch, ids):
 def test_other_products_from_those_vendors_are_ignored(monkeypatch, ids):
     _enumerating(monkeypatch, ids)
     assert device.candidates() == []
+
+
+# -- saving -------------------------------------------------------------------
+
+
+def test_eq_save_refuses_a_factory_slot(capsys):
+    with pytest.raises(FiioError, match="slot 2 is a factory preset; save to one of 7, 8, 9"):
+        _dry().set("eq-save", 2)
+    assert "TX" not in "".join(capsys.readouterr())
+
+
+def test_eq_save_accepts_a_user_slot():
+    assert _dry().set("eq-save", 8) == 8
+
+
+def test_eq_save_is_unguarded_where_the_user_slots_are_unknown():
+    assert _dry(registry.DEVICES["FIIO KA17"]).set("eq-save", 2) == 2
+
+
+def test_apply_with_save_refuses_a_factory_slot_before_writing_anything(capsys):
+    prof = {"preamp": -3.0, "bands": [{"freq": 100, "gain": 1.0, "q": 1.0, "filter": "peak"}]}
+    with pytest.raises(FiioError, match="factory preset"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot="rock", save=True))
+    assert "aa 0a" not in "".join(capsys.readouterr())  # the SET header

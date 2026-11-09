@@ -252,12 +252,18 @@ def _apply_profile(dac, prof, args):
     count = dac.band_count()
     bands = prof["bands"][:count]
     dropped = prof["bands"][count:]
+    slot = None
     if args.slot is not None:
-        slot = dac.spec.presets.get(str(args.slot).lower(), args.slot)
-        dac.set("eq-preset", int(slot))
+        slot = int(dac.spec.presets.get(str(args.slot).lower(), args.slot))
+    if args.save:
+        # before anything is written, not after the EQ has already changed
+        save_to = dac.get("eq-preset") if slot is None else slot
+        dac.require_user_slot(save_to)
+    if slot is not None:
+        dac.set("eq-preset", slot)
     preamp, _ = dac.write_profile(prof["preamp"], bands, count)
     if args.save:
-        dac.set("eq-save", dac.get("eq-preset") if args.slot is None else int(slot))
+        dac.set("eq-save", save_to)
     return {
         "applied": len(bands),
         "flattened": count - len(bands),
