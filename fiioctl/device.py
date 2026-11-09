@@ -102,7 +102,7 @@ def _lock_for(path):
 
 def _hid():
     if hid is None:
-        raise FiioError("the 'hid' package is not installed: pip install hid")
+        raise FiioError("the 'hidapi' package is not installed: pip install hidapi")
     return hid
 
 
