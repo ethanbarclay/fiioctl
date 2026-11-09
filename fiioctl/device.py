@@ -164,9 +164,13 @@ class Dac:
         for n in lens:
             out = buf.ljust(n, b"\x00") if n else buf
             try:
-                self.handle.write(out)
+                written = self.handle.write(out)
             except (OSError, ValueError) as exc:
                 last = exc
+                continue
+            # hidapi reports a failed write by returning -1, not by raising
+            if written < 0:
+                last = f"hid_write returned {written}"
                 continue
             self._wlen = n
             self._last = time.monotonic()
