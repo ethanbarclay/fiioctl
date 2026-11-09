@@ -15,6 +15,11 @@ import time
 
 from . import proto, registry
 
+try:  # Windows has no fcntl, and only Linux's hidraw needs it
+    import fcntl
+except ImportError:
+    fcntl = None
+
 
 def _backend():
     """The hidapi module to use, or None if hidapi is not installed."""
@@ -81,6 +86,15 @@ def _open_hint(path):
             "installed (see README); on macOS re-plug the device.")
 
 
+def _lock_for(path):
+    """A descriptor for taking turns on a hidraw node, which many can have open."""
+    if fcntl is None or not path.startswith(b"/dev/"):
+        return None
+    with contextlib.suppress(OSError):
+        return os.open(path, os.O_RDONLY)
+    return None
+
+
 def _hid():
     if hid is None:
         raise FiioError("the 'hid' package is not installed: pip install hid")
@@ -119,6 +133,7 @@ class Dac:
         self.dry = dry
         self._wlen = None
         self._last = 0.0
+        self._lock = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -185,13 +200,20 @@ class Dac:
                 + _open_hint(info["path"])
             ) from exc
         handle.set_nonblocking(False)
-        return cls(handle, info, spec, trace, dry)
+        dac = cls(handle, info, spec, trace, dry)
+        if not dry:
+            dac._lock = _lock_for(info["path"])
+        return dac
 
     def close(self):
         if self.handle is None:
             return
         with contextlib.suppress(Exception):  # closing should never be fatal
             self.handle.close()
+        if self._lock is not None:
+            with contextlib.suppress(OSError):
+                os.close(self._lock)
+            self._lock = None
 
     def __enter__(self):
         return self
@@ -237,31 +259,51 @@ class Dac:
             return
         raise FiioError(f"write failed: {last}")
 
+    @contextlib.contextmanager
+    def _turn(self):
+        """One exchange with the device, not overlapping any other program's."""
+        if self._lock is None:
+            yield
+            return
+        fcntl.flock(self._lock, fcntl.LOCK_EX)
+        try:
+            # every reader of a hidraw node gets every report, so anything
+            # already waiting here was another program's reply
+            with contextlib.suppress(OSError):
+                while self.handle.read(65, timeout_ms=1):
+                    pass
+            yield
+        finally:
+            self._pace()  # whoever goes next may be another program
+            fcntl.flock(self._lock, fcntl.LOCK_UN)
+
     def send(self, cmd, data=b"", hdr=proto.SET):
         """Fire a command without waiting for a reply."""
-        self._write(proto.frame(hdr, cmd, data))
+        with self._turn():
+            self._write(proto.frame(hdr, cmd, data))
 
     def request(self, cmd, data=b"", hdr=proto.GET, timeout=None):
         """Send a command and return the payload of the matching reply."""
-        self._write(proto.frame(hdr, cmd, data))
-        if self.dry:
-            raise FiioError("--dry-run cannot read values back from the device")
-        deadline = time.monotonic() + (timeout or self.spec.timeout)
-        while True:
-            left = deadline - time.monotonic()
-            if left <= 0:
-                raise FiioError(f"timed out waiting for reply to command {cmd}")
-            try:
-                report = self.handle.read(65, timeout_ms=max(1, int(left * 1000)))
-            except OSError as exc:
-                raise FiioError(f"read failed: {exc}") from exc
-            if not report:
-                continue
-            if self.trace:
-                self._log("RX", bytes(report))
-            parsed = proto.parse(report)
-            if parsed and parsed[0] == cmd:
-                return parsed[1]
+        with self._turn():
+            self._write(proto.frame(hdr, cmd, data))
+            if self.dry:
+                raise FiioError("--dry-run cannot read values back from the device")
+            deadline = time.monotonic() + (timeout or self.spec.timeout)
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise FiioError(f"timed out waiting for reply to command {cmd}")
+                try:
+                    report = self.handle.read(65, timeout_ms=max(1, int(left * 1000)))
+                except OSError as exc:
+                    raise FiioError(f"read failed: {exc}") from exc
+                if not report:
+                    continue
+                if self.trace:
+                    self._log("RX", bytes(report))
+                parsed = proto.parse(report)
+                if parsed and parsed[0] == cmd:
+                    return parsed[1]
 
     # -- typed access -------------------------------------------------------
 

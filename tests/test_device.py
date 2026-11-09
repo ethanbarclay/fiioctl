@@ -60,6 +60,70 @@ def test_write_that_fails_at_every_length_raises():
         _wired(handle).send(2, b"\x01")
 
 
+# -- sharing a hidraw node ----------------------------------------------------
+
+
+def _reply(value):
+    return list(bytes([7, 0xBB, 0x0B, 0, 0, 2, 1, value, 0, 0xEE]))
+
+
+class SharedHandle(FakeHandle):
+    """A hidraw node with reports already queued for this reader."""
+
+    def __init__(self, events, waiting=(), replies=()):
+        super().__init__()
+        self.events = events
+        self.waiting = list(waiting)
+        self.replies = list(replies)
+
+    def write(self, out):
+        self.events.append("write")
+        return super().write(out)
+
+    def read(self, _size, timeout_ms=0):
+        queue = self.replies if self.sent else self.waiting
+        return queue.pop(0) if queue else []
+
+
+def _shared(monkeypatch, **queues):
+    events = []
+    monkeypatch.setattr(device, "fcntl", SimpleNamespace(
+        LOCK_EX="lock", LOCK_UN="unlock", flock=lambda _fd, op: events.append(op)))
+    dac = _wired(SharedHandle(events, **queues))
+    dac._lock = 5
+    return dac, events
+
+
+def test_another_programs_reply_is_not_taken_for_ours(monkeypatch):
+    dac, _ = _shared(monkeypatch, waiting=[_reply(40)], replies=[_reply(59)])
+    assert dac.request(2) == bytes([59])
+
+
+def test_an_exchange_holds_the_device_throughout(monkeypatch):
+    dac, events = _shared(monkeypatch, replies=[_reply(59)])
+    dac.request(2)
+    assert events == ["lock", "write", "unlock"]
+
+
+def test_the_device_is_held_until_the_next_write_is_safe(monkeypatch):
+    dac, events = _shared(monkeypatch)
+    monkeypatch.setattr(device.time, "sleep", lambda _s: events.append("sleep"))
+    dac.send(2, b"\x01")
+    assert events == ["lock", "write", "sleep", "unlock"]
+
+
+def test_a_failed_exchange_still_lets_go(monkeypatch):
+    dac, events = _shared(monkeypatch)
+    with pytest.raises(FiioError, match="timed out"):
+        dac.request(2, timeout=0.01)
+    assert events[-1] == "unlock"
+
+
+@pytest.mark.parametrize("path", [b"3-6.1:1.0", b"DevSrvsID:4294"])
+def test_only_a_hidraw_node_is_locked(path):
+    assert device._lock_for(path) is None
+
+
 # -- value validation ---------------------------------------------------------
 
 
