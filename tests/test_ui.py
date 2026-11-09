@@ -4,6 +4,7 @@ The interaction contract under test: arrow to a parameter, press + or - to chang
 it, and the hint line always says what is selected and by how much it will move.
 """
 
+import threading
 import time
 
 import pytest
@@ -417,8 +418,8 @@ async def test_plus_on_the_preset_row_loads_that_presets_bands():
         await select_setting(app, pilot, "eq-preset")
         await pilot.press("plus")
         assert await until(app, pilot, lambda: app.bands and app.bands[0]["gain"] == 7.0)
+        assert await until(app, pilot, lambda: not app._replacing)
         assert app.settings["eq-gain"] == -7.0
-        assert app._switches == 0
         assert not [w for w in dac.writes if w[0] == "band"]
 
 
@@ -430,6 +431,7 @@ async def test_undoing_a_preset_change_reloads_too():
         await select_setting(app, pilot, "eq-preset")
         await pilot.press("plus")
         assert await until(app, pilot, lambda: app.bands[0]["gain"] == 7.0)
+        assert await until(app, pilot, lambda: not app._replacing)
         await pilot.press("u")
         assert await until(app, pilot, lambda: app.bands[0]["gain"] == 3.0)
         assert dac.values["eq-preset"] == 6
@@ -445,23 +447,114 @@ async def test_band_undo_does_not_cross_a_preset_switch():
         await ready(app, pilot)
         app._nudge_to_preset(7)
         assert await until(app, pilot, lambda: app.bands[0]["gain"] == 7.0)
+        assert await until(app, pilot, lambda: not app._replacing)
         dac.writes.clear()
         await pilot.press("u")     # only the preset switch is left to undo
         assert await until(app, pilot, lambda: dac.values["eq-preset"] == 6)
         assert not [w for w in dac.writes if w[0] == "band"]
 
 
-async def test_band_edits_wait_for_a_preset_switch_to_finish():
+PROFILE = {"id": "autoeq:x", "name": "x", "source": "autoeq", "rig": "", "preamp": -6.0,
+           "bands": [{"freq": 200, "gain": -3.0, "q": 1.0, "filter": "peak"}]}
+
+
+def hold(monkeypatch, dac, method):
+    """Make a device call wait, so a job stays in flight until the gate opens."""
+    gate = threading.Event()
+    original = getattr(dac, method)
+
+    def held(*args, **kwargs):
+        gate.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dac, method, held)
+    return gate
+
+
+async def settle(app, pilot, gate):
+    gate.set()
+    assert await until(app, pilot, lambda: not app._replacing)
+    await ready(app, pilot)
+
+
+def band_writes(dac):
+    return [w for w in dac.writes if w[0] == "band"]
+
+
+async def test_band_edit_during_an_apply_does_not_land_behind_it(dac, monkeypatch):
+    """The edit used to reach the device after the profile, but not the screen."""
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        await pilot.press("plus")      # something for undo to find
+        await ready(app, pilot)
+        gate = hold(monkeypatch, dac, "set")
+        app.write_entry(dict(PROFILE))
+        await pilot.press("plus")
+        await pilot.press("u")
+        await settle(app, pilot, gate)
+        assert len(band_writes(dac)) == 1 + 10
+        assert dac.bands[0]["gain"] == app.bands[0]["gain"] == -3.0
+
+
+async def test_gain_edit_during_an_apply_cannot_undo_its_preamp(dac, monkeypatch):
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "eq-gain")
+        gate = hold(monkeypatch, dac, "set")
+        app.write_entry({**PROFILE, "preamp": -3.0})
+        await pilot.press("plus")
+        await settle(app, pilot, gate)
+        assert dac.values["eq-gain"] == app.settings["eq-gain"] == -3.0
+
+
+async def test_edit_during_a_reload_does_not_land_behind_it(dac, monkeypatch):
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "volume")
+        gate = hold(monkeypatch, dac, "get")
+        app.action_reload()
+        await pilot.press("plus")
+        await settle(app, pilot, gate)
+        assert not [w for w in dac.writes if w[0] == "volume"]
+        assert app.settings["volume"] == 60
+
+
+async def test_band_edit_during_a_preset_switch_is_refused(monkeypatch):
     dac = TwoBankDac()
     app = FiioApp(dac)
     async with app.run_test() as pilot:
         await ready(app, pilot)
         await select_band(app, pilot, 0, 2)
-        app._switches = 1          # a switch is still in flight
+        gate = hold(monkeypatch, dac, "set")
+        app._nudge_to_preset(7)
+        await pilot.press("plus")
+        assert "still loading" in app.sub_title
+        await settle(app, pilot, gate)
+        assert not band_writes(dac)
+
+
+async def test_edits_work_again_after_a_replacing_job_fails(dac, monkeypatch):
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        original = dac.set
+
+        def refuse(name, value):
+            raise RuntimeError("firmware said no")
+
+        monkeypatch.setattr(dac, "set", refuse)
+        app.write_entry(dict(PROFILE))
+        assert await until(app, pilot, lambda: "firmware said no" in app.sub_title)
+        assert await until(app, pilot, lambda: not app._replacing)
+        monkeypatch.setattr(dac, "set", original)
         await pilot.press("plus")
         await ready(app, pilot)
-        assert not [w for w in dac.writes if w[0] == "band"]
-        app._switches = 0
+        assert ("band", 0, 32, 3.5, 0.71, "peak") in dac.writes
 
 
 # -- slots page ---------------------------------------------------------------

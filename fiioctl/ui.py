@@ -102,6 +102,26 @@ def device_job(fn):
     return queued
 
 
+def replaces_model(fn):
+    """Queue a device job whose result replaces what the UI has on screen.
+
+    An edit made while one is pending would land behind it on the device but
+    vanish from the screen when its result arrives, so edits wait (see _busy).
+    """
+    @functools.wraps(fn)
+    def queued(self, *args):
+        self._replacing += 1
+
+        def job():
+            try:
+                fn(self, *args)
+            finally:
+                self.call_from_thread(self._replaced)
+
+        self._submit(job)
+    return queued
+
+
 def cycle(options, value, direction):
     """The next option along, wrapping at either end."""
     index = options.index(value) if value in options else 0
@@ -169,9 +189,8 @@ class FiioApp(App):
         self._jobs = collections.deque()
         self._jobs_lock = threading.Lock()
         self._draining = False
-        #: preset switches still queued or running; until they finish, self.bands
-        #: describes a preset the device has left
-        self._switches = 0
+        #: replaces_model jobs still queued or running
+        self._replacing = 0
         self.settings = {}
         self.bands = []
         self.slot_names = {}
@@ -247,6 +266,15 @@ class FiioApp(App):
         bands = [b for b in (self.dac.get_band(i) for i in range(count)) if b]
         return count, bands
 
+    def _replaced(self):
+        self._replacing -= 1
+
+    def _busy(self):
+        """Refuse an edit if the model it would change is about to be replaced."""
+        if self._replacing:
+            self._status("still loading from the device")
+        return bool(self._replacing)
+
     def _forget_eq_undo(self):
         """Drop undo entries for the EQ just replaced: they would write into the new one."""
         self.undo_stack = [item for item in self.undo_stack
@@ -297,7 +325,7 @@ class FiioApp(App):
     def action_reload(self):
         self.reload()
 
-    @device_job
+    @replaces_model
     @reporting
     def reload(self):
         values, caps = {}, set(self.spec.caps)
@@ -546,7 +574,7 @@ class FiioApp(App):
     # -- editing ------------------------------------------------------------
 
     def action_nudge(self, direction: int):
-        if self.renaming:
+        if self.renaming or self._busy():
             return
         target = self._target()
         if not target:
@@ -592,9 +620,6 @@ class FiioApp(App):
         self.push_setting(name, new)
 
     def _nudge_band(self, index, field, direction):
-        if self._switches:
-            self._status("still loading the preset")
-            return
         band = dict(self.bands[index])
         before = dict(band)
         if field == "frequency":
@@ -635,6 +660,8 @@ class FiioApp(App):
             f"Q {band['q']:.2f} {band['filter']}")
 
     def action_undo(self):
+        if self._busy():
+            return
         if not self.undo_stack:
             self.notify("nothing to undo")
             return
@@ -674,24 +701,17 @@ class FiioApp(App):
     def _begin_switch(self, value):
         self._forget_eq_undo()
         self.settings["eq-preset"] = value
-        self._switches += 1
         self.repaint()
         self.switch_preset(value)
 
-    @device_job
+    @replaces_model
     @reporting
     def switch_preset(self, value):
         # one job, so nothing can be queued between the write and the read
-        try:
-            self.dac.set("eq-preset", value)
-            bands = self._read_bands()[1]
-            gain = self.dac.get("eq-gain")
-            self.call_from_thread(self._after_switch, bands, gain)
-        finally:
-            self.call_from_thread(self._switch_finished)
-
-    def _switch_finished(self):
-        self._switches -= 1
+        self.dac.set("eq-preset", value)
+        bands = self._read_bands()[1]
+        gain = self.dac.get("eq-gain")
+        self.call_from_thread(self._after_switch, bands, gain)
 
     def _after_switch(self, bands, gain):
         self.bands = bands
@@ -841,7 +861,7 @@ class FiioApp(App):
         library.resolve(entry, len(self.bands) or 10)
         self.call_from_thread(self.write_entry, entry)
 
-    @device_job
+    @replaces_model
     @reporting
     def write_entry(self, entry):
         count = self.dac.band_count()
