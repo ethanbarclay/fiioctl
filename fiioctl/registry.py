@@ -132,7 +132,7 @@ class Device:
     #: how this model is actually spoken to. Only "hid" is implemented here; the
     #: others are recorded so the tool can say so instead of failing obscurely.
     #:   "hid"     - the shared HID command set this project implements
-    #:   "adapter" - a different protocol, via the app's own adapter factory
+    #:   "adapter" - the same HID commands via the app's own controller, untested
     #:   "serial"  - USB CDC serial rather than HID
     transport: str = "hid"
     #: has any of this entry been confirmed against real hardware?
@@ -160,11 +160,11 @@ KA15 = Device(
 )
 
 #: Devices the official app drives through its adapter factory (`R4e` in the
-#: bundle) rather than the shared HID command set. A different protocol, so our
-#: frames are meaningless to them.
+#: bundle). Its frames match the shared HID command set, but no model has been
+#: tried yet, so these are refused unless forced.
 #: match key -> (display name, FiiO catalogue id). The catalogue is an HTTP API
-#: keyed by product id, so it works for these models even though their control
-#: protocol does not - keep the ids rather than dropping them.
+#: keyed by product id, so it works for these models even while they are refused
+#: - keep the ids rather than dropping them.
 ADAPTER_DEVICES = {
     "FIIO KG13": ("FIIO KG13", 409),
     "FIIO BTR15": ("FIIO BTR15", 24),

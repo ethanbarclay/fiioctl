@@ -74,8 +74,8 @@ def data_errors():
     try:
         from .cloud import CloudError
     except ImportError:
-        return (ValueError, TypeError)
-    return (CloudError, ValueError, TypeError)
+        return (ValueError, TypeError, OverflowError)
+    return (CloudError, ValueError, TypeError, OverflowError)
 
 
 def connect(args):
@@ -239,11 +239,10 @@ def cmd_peq_show(args):
 
 def cmd_peq_set(args):
     with connect(args) as dac:
-        dac.set_band(args.band, args.freq, args.gain, args.q, args.filter)
-        freq = int(round(args.freq))
-        emit({"index": args.band, "freq": freq, "gain": args.gain, "q": args.q,
-              "filter": args.filter, "written": True}, args.json,
-             f"band {args.band}: {freq} Hz {args.gain:+} dB Q {args.q} {args.filter}")
+        band = dac.set_band(args.band, args.freq, args.gain, args.q, args.filter)
+        emit({**band, "written": True}, args.json,
+             f"band {band['index']}: {band['freq']} Hz {band['gain']:+} dB "
+             f"Q {band['q']} {band['filter']}")
     return EXIT_OK
 
 
@@ -252,12 +251,20 @@ def _apply_profile(dac, prof, args):
     count = dac.band_count()
     bands = prof["bands"][:count]
     dropped = prof["bands"][count:]
-    if args.slot is not None:
-        slot = dac.spec.presets.get(str(args.slot).lower(), args.slot)
-        dac.set("eq-preset", int(slot))
+    slot = None if args.slot is None else dac.resolve_preset(args.slot)
+    save_to = slot
+    if args.save:
+        # before anything is written, not after the EQ has already changed. A dry
+        # run cannot read the active preset, but should still show its frames.
+        if slot is None and not dac.dry:
+            save_to = dac.get("eq-preset")
+        if save_to is not None:
+            dac.require_user_slot(save_to)
+    if slot is not None:
+        dac.set("eq-preset", slot)
     preamp, _ = dac.write_profile(prof["preamp"], bands, count)
     if args.save:
-        dac.set("eq-save", dac.get("eq-preset") if args.slot is None else int(slot))
+        dac.set("eq-save", dac.get("eq-preset") if save_to is None else save_to)
     return {
         "applied": len(bands),
         "flattened": count - len(bands),
@@ -562,7 +569,7 @@ def cmd_autoeq_search(args):
         for row in rows:
             variant = f"  [{row['config']}]" if row.get("config") else ""
             print(f"{row['id']:>6}  {row['productName']}{variant}"
-                  f"  —  {row.get('source') or '?'}")
+                  f"  -  {row.get('source') or '?'}")
     return EXIT_OK
 
 
@@ -673,6 +680,8 @@ def cmd_batch(args):
                 continue
             try:
                 req = json.loads(line)
+                if not isinstance(req, dict):
+                    raise ValueError("expected a JSON object")
                 op = req.get("op", "get")
                 if op == "get":
                     res = {"ok": True, "value": dac.get(req["name"])}
@@ -690,7 +699,7 @@ def cmd_batch(args):
                     res = {"ok": True, "value": payload.hex(" ")}
                 else:
                     res = {"ok": False, "error": f"unknown op {op!r}"}
-            except (FiioError, KeyError, ValueError, TypeError) as exc:
+            except (FiioError, KeyError, ValueError, TypeError, OverflowError) as exc:
                 res = {"ok": False, "error": str(exc)}
             json.dump({**res, "request": line}, sys.stdout)
             sys.stdout.write("\n")

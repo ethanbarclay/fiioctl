@@ -37,7 +37,7 @@ def _integral(name, value):
     """Require a whole number, so bad input fails as a FiioError not a traceback."""
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise FiioError(f"{name} must be a whole number; got {value!r}") from None
     if not math.isfinite(number) or number != int(number):
         raise FiioError(f"{name} must be a whole number; got {value!r}")
@@ -47,6 +47,18 @@ def _integral(name, value):
 def _clamp(value, limits):
     lo, hi = limits
     return max(lo, min(hi, value))
+
+
+def _unnamed_error(info, detail=""):
+    """Why a device with no readable name cannot be used."""
+    # without permission, hidapi's Linux backend cannot read the name either,
+    # so the model is unknown and no profile can be matched
+    usb_id = f"{info.get('vendor_id', 0):04x}:{info.get('product_id', 0):04x}"
+    return FiioError(
+        f"found a HID device ({usb_id}) but could not read its name{detail}. On Linux "
+        "this usually means the udev rule is not installed (see README); on macOS "
+        "re-plug the device."
+    )
 
 
 def _hid():
@@ -92,8 +104,8 @@ class Dac:
 
     #: why a model cannot be driven, keyed by its declared transport
     UNSUPPORTED = {
-        "adapter": ("the official app drives this model through a different "
-                    "protocol, which fiioctl does not implement"),
+        "adapter": ("FiiO's app handles this model through its own controller, "
+                    "and fiioctl has not been tested on it"),
         "serial": ("this model is driven over USB CDC serial rather than HID, "
                    "and fiioctl has no serial transport"),
     }
@@ -120,12 +132,17 @@ class Dac:
             raise FiioError(
                 "no FiiO device found over HID (check the cable, and udev rules "
                 "on Linux)." + hint)
+        found = infos
         if serial:
             infos = [i for i in infos if (i.get("serial_number") or "") == serial]
         if product:
             want = product.upper()
             infos = [i for i in infos if want in (i.get("product_string") or "").upper()]
         if not infos:
+            # filtering cannot match a name or serial that could not be read
+            unnamed = next((i for i in found if not i.get("product_string")), None)
+            if unnamed:
+                raise _unnamed_error(unnamed)
             raise FiioError(f"no FiiO device matched serial={serial!r} product={product!r}")
         info = _pick(infos)
         spec = registry.match(info.get("product_string"))
@@ -141,6 +158,8 @@ class Dac:
         except OSError as exc:
             if dry:
                 return cls(None, info, spec, trace, True)
+            if not info.get("product_string"):
+                raise _unnamed_error(info, f" or open it: {exc}") from exc
             raise FiioError(
                 f"cannot open {info.get('product_string')!r}: {exc}. "
                 "On Linux install the udev rule (see README); on macOS re-plug the device."
@@ -238,6 +257,8 @@ class Dac:
         """
         step = self.spec.gain_step or 0.1
         value = float(value)
+        if not math.isfinite(value):
+            raise FiioError(f"gain must be a finite number; got {value}")
         snapped = math.floor(value / step) * step if safe else round(value / step) * step
         lo, hi = self.spec.gain_range
         return round(max(lo, min(hi, snapped)), 1)
@@ -257,6 +278,25 @@ class Dac:
         decode = proto.CODECS[cmd.codec][1]
         return decode(self.request(cmd.id, timeout=timeout))
 
+    def resolve_preset(self, value):
+        """The slot number a preset name or number refers to on this device."""
+        # preset names are per-device, so they live on the spec rather than in
+        # Cmd.enum; resolve one before trying to read a number
+        if isinstance(value, str) and value.strip().lower() in self.spec.presets:
+            return self.spec.presets[value.strip().lower()]
+        try:
+            number = int(value)
+        except (TypeError, ValueError, OverflowError):
+            valid = ", ".join(sorted(self.spec.presets))
+            raise FiioError(f"eq-preset {value!r} is not a number or a preset "
+                            f"name; names: {valid}") from None
+        if number not in set(self.spec.presets.values()):
+            valid = ", ".join(f"{k} ({v})" for k, v in
+                              sorted(self.spec.presets.items(), key=lambda kv: kv[1]))
+            raise FiioError(f"eq-preset {number} is not a slot on this device; "
+                            f"valid: {valid}")
+        return number
+
     def _coerce(self, name, cmd, value):
         """Resolve a value to something the device will actually accept.
 
@@ -270,7 +310,7 @@ class Dac:
                 return cmd.enum[str(value)]
             try:
                 number = int(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 number = None
             if number is None or number not in cmd.enum.values():
                 options = ", ".join(f"{text} ({num})"
@@ -280,22 +320,7 @@ class Dac:
             return number
 
         if name == "eq-preset" and self.spec.presets:
-            # preset names are per-device, so they live on the spec rather than
-            # in Cmd.enum; resolve one before trying to read a number
-            if isinstance(value, str) and value.strip().lower() in self.spec.presets:
-                return self.spec.presets[value.strip().lower()]
-            try:
-                number = int(value)
-            except (TypeError, ValueError):
-                valid = ", ".join(sorted(self.spec.presets))
-                raise FiioError(f"eq-preset {value!r} is not a number or a preset "
-                                f"name; names: {valid}") from None
-            if number not in set(self.spec.presets.values()):
-                valid = ", ".join(f"{k} ({v})" for k, v in
-                                  sorted(self.spec.presets.items(), key=lambda kv: kv[1]))
-                raise FiioError(f"eq-preset {number} is not a slot on this device; "
-                                f"valid: {valid}")
-            return number
+            return self.resolve_preset(value)
 
         if name == "eq-gain":
             return self.snap_gain(value)
@@ -314,7 +339,23 @@ class Dac:
             lo, hi = limits
             if not lo <= float(value) <= hi:
                 raise FiioError(f"{name}={value} outside {lo}..{hi}")
+        if name == "eq-save":
+            self.require_user_slot(value)
         return value
+
+    def require_user_slot(self, slot):
+        """Refuse to save over a factory preset, on models whose user slots are known."""
+        slots = self.spec.name_slots
+        if not slots or slot in slots:
+            return
+        if slot == self.spec.eq_off:
+            what = "is the EQ-off setting"
+        elif slot in self.spec.presets.values():
+            what = "is a factory preset"
+        else:
+            what = "does not exist on this device"
+        raise FiioError(f"slot {slot} {what}; save to one of "
+                        f"{', '.join(str(s) for s in slots)}")
 
     def set(self, name, value, verify=False):
         """Write a setting. With `verify`, read it back and return what stuck.
@@ -371,7 +412,10 @@ class Dac:
         lo, hi = self.spec.q_range
         if not lo <= float(q) <= hi:
             raise FiioError(f"band Q {q} outside {lo}..{hi}")
-        self.send(registry.BAND_CMD, proto.enc_band(index, freq, gain, q, filter_type))
+        payload = proto.enc_band(index, freq, gain, q, filter_type)
+        self.send(registry.BAND_CMD, payload)
+        # as it went over the wire, not as it was typed
+        return proto.dec_band(payload)
 
     def write_profile(self, preamp, bands, count):
         """Write a profile's pre-amp and bands, flattening any bands it leaves unused.
@@ -383,14 +427,10 @@ class Dac:
         # keeping less attenuation than the profile asked for is what clips
         stored = self.snap_gain(preamp, safe=True)
         self.set("eq-gain", stored)
-        written = [{"index": i, "freq": int(round(float(b["freq"]))),
-                    "gain": _clamp(float(b["gain"]), self.spec.gain_range),
-                    "q": _clamp(float(b["q"]), self.spec.q_range), "filter": b["filter"]}
-                   for i, b in enumerate(bands[:count])]
-        written += [{"index": i, "freq": 1000, "gain": 0.0, "q": 0.7, "filter": "peak"}
-                    for i in range(len(written), count)]
-        for b in written:
-            self.set_band(b["index"], b["freq"], b["gain"], b["q"], b["filter"])
+        chosen = [(b["freq"], _clamp(float(b["gain"]), self.spec.gain_range),
+                   _clamp(float(b["q"]), self.spec.q_range), b["filter"]) for b in bands[:count]]
+        chosen += [(1000, 0.0, 0.7, "peak")] * (count - len(chosen))
+        written = [self.set_band(i, *band) for i, band in enumerate(chosen)]
         return stored, written
 
     def scan(self, limit=256, timeout=0.25):

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fiioctl import device, registry
+from fiioctl import cli, device, registry
 from fiioctl.device import Dac, FiioError
 
 
@@ -148,3 +148,110 @@ def test_rebadged_controllers_match_on_their_listed_product(monkeypatch, ids):
 def test_other_products_from_those_vendors_are_ignored(monkeypatch, ids):
     _enumerating(monkeypatch, ids)
     assert device.candidates() == []
+
+
+# -- saving -------------------------------------------------------------------
+
+
+def test_eq_save_refuses_a_factory_slot(capsys):
+    with pytest.raises(FiioError, match="slot 2 is a factory preset; save to one of 7, 8, 9"):
+        _dry().set("eq-save", 2)
+    assert "TX" not in "".join(capsys.readouterr())
+
+
+def test_eq_save_accepts_a_user_slot():
+    assert _dry().set("eq-save", 8) == 8
+
+
+def test_eq_save_is_unguarded_where_the_user_slots_are_unknown():
+    assert _dry(registry.DEVICES["FIIO KA17"]).set("eq-save", 2) == 2
+
+
+def test_apply_with_save_refuses_a_factory_slot_before_writing_anything(capsys):
+    prof = {"preamp": -3.0, "bands": [{"freq": 100, "gain": 1.0, "q": 1.0, "filter": "peak"}]}
+    with pytest.raises(FiioError, match="factory preset"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot="rock", save=True))
+    assert "aa 0a" not in "".join(capsys.readouterr())  # the SET header
+
+
+# -- applying -----------------------------------------------------------------
+
+
+def test_write_profile_reports_what_the_wire_can_carry():
+    bands = [{"freq": 100.4, "gain": 2.7524, "q": 0.5779, "filter": "peak"}]
+    _, written = _dry().write_profile(-3.0, bands, 1)
+    assert written == [{"index": 0, "freq": 100, "gain": 2.8, "q": 0.58, "filter": "peak"}]
+
+
+# -- opening ------------------------------------------------------------------
+
+
+def _unopenable(monkeypatch, name):
+    def refuse(_path):
+        raise OSError("open failed")
+
+    info = {"vendor_id": 0x2972, "product_id": 0x0104, "product_string": name, "path": b"p"}
+    monkeypatch.setattr(device, "hid", SimpleNamespace(
+        enumerate=lambda: [info], device=lambda: SimpleNamespace(open_path=refuse)))
+
+
+def test_an_unnamed_device_that_will_not_open_says_what_was_found(monkeypatch):
+    _unopenable(monkeypatch, "")
+    with pytest.raises(FiioError, match=r"found a HID device \(2972:0104\).*udev rule"):
+        Dac.open()
+
+
+def test_a_named_device_that_will_not_open_is_named(monkeypatch):
+    _unopenable(monkeypatch, "FIIO KA15")
+    with pytest.raises(FiioError, match="cannot open 'FIIO KA15'"):
+        Dac.open()
+
+
+@pytest.mark.parametrize("kwargs", [{"product": "ka15"}, {"serial": "ABC123"}])
+def test_filters_do_not_hide_a_device_with_no_readable_name(monkeypatch, kwargs):
+    _unopenable(monkeypatch, "")
+    with pytest.raises(FiioError, match=r"found a HID device \(2972:0104\).*udev rule"):
+        Dac.open(**kwargs)
+
+
+def test_a_named_device_that_does_not_match_is_still_no_match(monkeypatch):
+    _unopenable(monkeypatch, "FIIO KA17")
+    with pytest.raises(FiioError, match="no FiiO device matched"):
+        Dac.open(product="ka15")
+
+
+def test_a_dry_run_with_save_still_shows_its_writes(capsys):
+    prof = {"preamp": -3.0, "bands": [{"freq": 100, "gain": 1.0, "q": 1.0, "filter": "peak"}]}
+    with pytest.raises(FiioError, match="cannot read"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot=None, save=True))
+    assert "".join(capsys.readouterr()).count("aa 0a") == 1 + 10  # pre-amp and every band
+
+
+@pytest.mark.parametrize("slot, what", [(99, "does not exist"), (10, "is the EQ-off setting")])
+def test_eq_save_says_what_a_refused_slot_actually_is(slot, what):
+    with pytest.raises(FiioError, match=f"slot {slot} {what}.*save to one of 7, 8, 9"):
+        _dry().set("eq-save", slot)
+
+
+def test_slot_is_resolved_like_any_other_preset(capsys):
+    prof = {"preamp": -3.0, "bands": [{"freq": 100, "gain": 1.0, "q": 1.0, "filter": "peak"}]}
+    with pytest.raises(FiioError, match="not a number or a preset name"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot="nonsense", save=False))
+    with pytest.raises(FiioError, match="99 is not a slot on this device"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot="99", save=False))
+    assert "aa 0a" not in "".join(capsys.readouterr())
+    cli._apply_profile(_dry(), prof, SimpleNamespace(slot="USER2", save=False))
+    assert "aa 0a 00 00 16 01 08" in "".join(capsys.readouterr())
+
+
+def test_a_band_and_a_profile_round_a_value_the_same_way():
+    direct = _dry().set_band(0, 100, 0.15, 1.0, "peak")
+    _, written = _dry().write_profile(-3.0, [{"freq": 100, "gain": 0.15, "q": 1.0,
+                                              "filter": "peak"}], 1)
+    assert direct["gain"] == written[0]["gain"] == 0.2
+
+
+def test_write_profile_flattens_the_bands_it_does_not_use():
+    _, written = _dry().write_profile(-3.0, [], 2)
+    assert [(b["index"], b["freq"], b["gain"], b["q"]) for b in written] == [
+        (0, 1000, 0.0, 0.7), (1, 1000, 0.0, 0.7)]

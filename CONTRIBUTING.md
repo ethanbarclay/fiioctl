@@ -52,6 +52,10 @@ $ fiioctl peq show
 $ fiioctl peq import before.txt
 ```
 
+On the KA15, switching presets does not discard band edits, so use the import to
+put them back. It can leave a few Q values about 0.02 off, because the firmware
+adjusts Q slightly when it is written.
+
 Say in the report what happened, and include the firmware version from
 `fiioctl --json info`.
 
@@ -59,11 +63,11 @@ Say in the report what happened, and include the firmware version from
 
 - **`set factory-reset`**, for the obvious reason. It has never been exercised,
   even on the KA15.
-- **`eq save`**, or `--save` on anything. It overwrites a preset slot, and the CLI
-  does not yet stop you from writing over a factory one.
+- **`eq save`**, or `--save` on anything. It overwrites a preset slot, and fiioctl
+  only knows which slots are factory ones on the KA15.
 - **`raw`** with a command you do not know. Some of the undecoded ones are actions
   rather than settings.
-- **`--force`**. See below.
+- **`--force`**, except for the read-only commands further down.
 
 ### Turning a report into a pull request
 
@@ -80,36 +84,57 @@ $ fiioctl scan --save before.json
 $ fiioctl scan --diff before.json
 ```
 
-## The other two protocols
+## Models fiioctl refuses today
 
-FiiO's app drives some models in ways fiioctl does not implement, so these need
-real engineering rather than a registry entry:
+These are refused for two different reasons:
 
 | | Devices |
 |---|---|
-| Adapter protocol | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming |
+| Adapter controller, untested | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming |
 | USB CDC serial | K15 confirmed; K17 and K19 possibly |
 
 I cannot test any of these, so support depends on someone who owns one. If that
 is you, open an issue (or add to an existing one for your model) saying which
-model it is and how far you are willing to go. These help, roughly in order:
+model it is and how far you are willing to go.
+
+### Adapter models
+
+Going by FiiO's app, these use the same HID commands as everything else, so they
+should need much less than a new protocol. Nobody has tried one yet. These help,
+roughly in order:
 
 1. The output of `fiioctl --json devices`, which does not open the device, and
    your OS.
+2. The output of these, which only read from the device:
+
+   ```console
+   $ fiioctl --force --json info
+   $ fiioctl --force --json state
+   $ fiioctl --force peq show
+   ```
+
+3. Running test builds and sending back the `--trace` output.
+
+`--force` skips the refusal, so please stick to those read-only commands. In
+particular, do not change presets: on some of these models the preset numbers do
+not fit in the single byte fiioctl sends.
+
+### Serial models
+
+These need a real new transport, and `--force` will not help, because a serial-only
+model does not show up as a HID device at all. These help, roughly in order:
+
+1. Your OS, and which model it is.
 2. USB captures of FiiO's official app while you change one setting at a time,
    using Wireshark with usbmon on Linux or USBPcap on Windows. This is passive, so
    it is safe for the device. Captures can include its serial number.
 3. Running test builds and sending back the `--trace` output.
 
-**Please do not use `--force` on these models.** It sends them frames from a
-protocol they are not built to understand, and nobody knows how each one reacts.
+### Writing the code
 
-For anyone writing the code:
-
-- The protocol lives in the FiiO Control web app bundle. See
-  [docs/PROTOCOL.md](docs/PROTOCOL.md) for where to find it and how the shared
-  protocol was derived. Whether the adapter models share one protocol is not
-  known yet.
+- FiiO's web app bundle is the reference. See [docs/PROTOCOL.md](docs/PROTOCOL.md)
+  for where to find it, how the shared protocol was derived, and what the adapter
+  models do differently.
 - A new transport belongs behind `Dac` in [`fiioctl/device.py`](fiioctl/device.py),
   so the CLI and TUI do not need to know about it.
 - Build it up so that a mistake cannot do much: identify the device and read

@@ -96,6 +96,56 @@ def test_out_of_range_volume_is_refused_before_anything_is_sent(monkeypatch, cap
     assert "outside 0..255" in captured.out and "TX" not in captured.err
 
 
+def test_batch_reports_a_line_that_is_not_an_object(monkeypatch, capsys):
+    import io
+    import json
+
+    monkeypatch.setattr(cli, "connect", _no_device)
+    monkeypatch.setattr("sys.stdin", io.StringIO('[1, 2]\n{"op": "nope"}\n'))
+    assert cli.main(["batch"]) == cli.EXIT_OK
+    first, second = (json.loads(line) for line in capsys.readouterr().out.splitlines())
+    assert first["ok"] is False and "JSON object" in first["error"]
+    assert second["ok"] is False and "unknown op" in second["error"]
+
+
+def test_batch_survives_values_too_large_to_convert(monkeypatch, capsys):
+    import io
+    import json
+
+    from fiioctl import device
+
+    huge = "1" + "0" * 400
+    lines = [f'{{"op": "set", "name": "{name}", "value": {value}}}'
+             for name, value in (("eq-gain", "1e999"), ("eq-preset", "1e999"), ("volume", huge),
+                                 ("volume", "30"))]
+    monkeypatch.setattr(device, "candidates", list)
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(lines) + "\n"))
+    assert cli.main(["--dry-run", "batch"]) == cli.EXIT_OK
+    results = [json.loads(line)["ok"] for line in capsys.readouterr().out.splitlines()]
+    assert results == [False, False, False, True]
+
+
+def test_an_infinite_gain_is_refused_not_a_traceback(monkeypatch, capsys):
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    assert cli.main(["--dry-run", "set", "eq-gain", "inf"]) == cli.EXIT_DEVICE
+    assert "finite" in capsys.readouterr().out
+
+
+def test_peq_set_reports_what_was_sent(monkeypatch, capsys):
+    import json
+
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    argv = ["--dry-run", "peq", "set", "0", "--freq", "100", "--gain", "2.7524", "--q", "0.5779",
+            "--json"]
+    assert cli.main(argv) == cli.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert (out["gain"], out["q"], out["written"]) == (2.8, 0.58, True)
+
+
 def test_abort_reports_as_json_too(monkeypatch, capsys):
     import json
 
