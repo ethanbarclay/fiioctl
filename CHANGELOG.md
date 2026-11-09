@@ -13,6 +13,9 @@ if a protocol finding demands it.
   the model, FiiO's measurements and AutoEq, merged and ranked the same way in
   both. `eq apply` applies a result from any of them, by search or by id. Its
   `--json` rows gain `id` and `index`, and `source` now names the source.
+  Community presets always rank last, and `--limit` caps the merged list,
+  defaulting to 50.
+- `autoeq search` output uses a plain hyphen rather than an em dash.
 
 ### Fixed
 
@@ -26,7 +29,15 @@ if a protocol finding demands it.
   FiiO devices, in device selection and in the udev rules.
 - The TUI rounds a profile's pre-amp downward like the CLI, shows the new EQ
   after applying it, and reloads bands whenever the preset changes.
-- TUI device writes happen strictly in the order they were made.
+- TUI device writes happen strictly in the order they were made, and edits are
+  refused while a reload, preset switch or profile apply is pending.
+- After applying a profile, the TUI shows the values the device was sent rather
+  than the profile's unrounded ones.
+- `eq save` and `--save` refuse a factory slot, on models whose user slots are
+  known, and before anything is written.
+- A device whose name cannot be read says what was found and points at the udev
+  rule, rather than reporting `cannot open ''`.
+- A `batch` line that is not a JSON object is reported instead of crashing.
 - `autoeq` picks the recommended target for the measurement's rig as well as its
   source and form factor.
 - `--json` is accepted after the subcommand as well as before it.

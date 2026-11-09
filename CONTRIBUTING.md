@@ -52,6 +52,10 @@ $ fiioctl peq show
 $ fiioctl peq import before.txt
 ```
 
+On the KA15, switching presets does not discard band edits, so use the import to
+put them back. It can leave a few Q values about 0.02 off, because the firmware
+adjusts Q slightly when it is written.
+
 Say in the report what happened, and include the firmware version from
 `fiioctl --json info`.
 
@@ -59,8 +63,8 @@ Say in the report what happened, and include the firmware version from
 
 - **`set factory-reset`**, for the obvious reason. It has never been exercised,
   even on the KA15.
-- **`eq save`**, or `--save` on anything. It overwrites a preset slot, and the CLI
-  does not yet stop you from writing over a factory one.
+- **`eq save`**, or `--save` on anything. It overwrites a preset slot, and fiioctl
+  only knows which slots are factory ones on the KA15.
 - **`raw`** with a command you do not know. Some of the undecoded ones are actions
   rather than settings.
 - **`--force`**. See below.

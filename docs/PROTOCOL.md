@@ -192,8 +192,11 @@ every field through a real device gives:
 |---|---|---|
 | band gain (cmd 21) | dB x 10 | **exact** — -7.5, -7.4, +6.7 all survive |
 | band frequency | Hz | exact |
-| band Q | Q x 100 | **~±0.01 drift** — 0.71→0.70, 2.79→2.80, 5.00→5.01 |
+| band Q | Q x 100 | **up to ~0.02 drift, and not stable** — 0.71→0.70, 2.79→2.80, 5.76→5.78, then 5.78→5.80 if written back |
 | **EQ global gain (cmd 23)** | dB x 10 | **whole decibels only**, truncated toward zero |
+
+Band edits that have not been saved also stay with their preset when the active
+preset changes, so switching away and back does not restore the saved EQ.
 
 The global gain is the one that matters. Measured:
 
