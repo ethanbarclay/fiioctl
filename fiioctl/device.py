@@ -141,6 +141,15 @@ class Dac:
         except OSError as exc:
             if dry:
                 return cls(None, info, spec, trace, True)
+            if not info.get("product_string"):
+                # without permission, hidapi's Linux backend cannot read the name
+                # either, so the model is unknown and no profile was matched
+                usb_id = f"{info.get('vendor_id', 0):04x}:{info.get('product_id', 0):04x}"
+                raise FiioError(
+                    f"found a HID device ({usb_id}) but could not read its name or open "
+                    f"it: {exc}. On Linux this usually means the udev rule is not "
+                    "installed (see README); on macOS re-plug the device."
+                ) from exc
             raise FiioError(
                 f"cannot open {info.get('product_string')!r}: {exc}. "
                 "On Linux install the udev rule (see README); on macOS re-plug the device."
