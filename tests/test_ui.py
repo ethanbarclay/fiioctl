@@ -4,6 +4,8 @@ The interaction contract under test: arrow to a parameter, press + or - to chang
 it, and the hint line always says what is selected and by how much it will move.
 """
 
+import time
+
 import pytest
 
 pytest.importorskip("textual")
@@ -354,6 +356,26 @@ async def test_undo_restores_previous_band_value(dac):
         await pilot.press("u")
         await ready(app, pilot)
         assert dac.bands[0]["gain"] == 3.0
+
+
+async def test_device_writes_land_in_the_order_they_were_made(dac, monkeypatch):
+    """The earliest write is the slowest, so a race would leave it last."""
+    original = dac.set_band
+    delays = iter([0.15, 0.05])
+
+    def slow(index, freq, gain, q, filter_type=0):
+        time.sleep(next(delays, 0))
+        original(index, freq, gain, q, filter_type)
+
+    monkeypatch.setattr(dac, "set_band", slow)
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        for _ in range(4):
+            await pilot.press("plus")
+        assert await until(app, pilot, lambda: len(dac.writes) == 4)
+        assert [w[3] for w in dac.writes] == [3.5, 4.0, 4.5, 5.0]
 
 
 # -- slots page ---------------------------------------------------------------

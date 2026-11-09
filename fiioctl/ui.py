@@ -8,12 +8,13 @@ One rule throughout: **arrow to a thing, press + or - to change it.** Nothing is
 committed with a button, and the hint line at the bottom always names what is
 selected and what the step is, so there is nothing to memorise.
 
-Device I/O runs on worker threads behind a lock, because the HID calls block and
-the firmware wants ~100 ms between commands. The UI keeps a local model and
-repaints from that, so editing stays responsive instead of waiting for a
-read-back after every keystroke.
+Device I/O runs on one worker thread, strictly in the order it was asked for,
+because the HID calls block and the firmware wants ~100 ms between commands. The
+UI keeps a local model and repaints from that, so editing stays responsive
+instead of waiting for a read-back after every keystroke.
 """
 
+import collections
 import contextlib
 import functools
 import threading
@@ -94,6 +95,18 @@ def reporting(fn):
     return inner
 
 
+def device_job(fn):
+    """Queue a method for the device thread instead of running it now.
+
+    Giving each edit its own thread left the order to whichever won the lock, so
+    the device could finish on an older value than the one on screen.
+    """
+    @functools.wraps(fn)
+    def queued(self, *args):
+        self._submit(functools.partial(fn, self, *args))
+    return queued
+
+
 def cycle(options, value, direction):
     """The next option along, wrapping at either end."""
     index = options.index(value) if value in options else 0
@@ -158,7 +171,9 @@ class FiioApp(App):
         super().__init__()
         self.dac = dac
         self.spec = dac.spec
-        self._lock = threading.Lock()
+        self._jobs = collections.deque()
+        self._jobs_lock = threading.Lock()
+        self._draining = False
         self.settings = {}
         self.bands = []
         self.slot_names = {}
@@ -209,14 +224,29 @@ class FiioApp(App):
 
     # -- plumbing -----------------------------------------------------------
 
-    def _io(self, fn, *args, **kwargs):
-        with self._lock:
-            return fn(*args, **kwargs)
+    def _submit(self, job):
+        """Add a job to the device queue, starting the thread if it has stopped."""
+        with self._jobs_lock:
+            self._jobs.append(job)
+            if self._draining:
+                return
+            self._draining = True
+        self._drain()
+
+    @work(thread=True, group="io")
+    def _drain(self):
+        while True:
+            with self._jobs_lock:
+                if not self._jobs:
+                    self._draining = False
+                    return
+                job = self._jobs.popleft()
+            job()
 
     def _read_bands(self):
-        """(count, bands) straight from the device. Runs on a worker thread."""
-        count = self._io(self.dac.band_count)
-        bands = [b for b in (self._io(self.dac.get_band, i) for i in range(count)) if b]
+        """(count, bands) straight from the device. Runs on the device thread."""
+        count = self.dac.band_count()
+        bands = [b for b in (self.dac.get_band(i) for i in range(count)) if b]
         return count, bands
 
     def _status(self, text, error=False):
@@ -264,7 +294,7 @@ class FiioApp(App):
     def action_reload(self):
         self.reload()
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def reload(self):
         values, caps = {}, set(self.spec.caps)
@@ -279,7 +309,7 @@ class FiioApp(App):
             if need and need not in caps:
                 continue
             try:
-                values[name] = self._io(self.dac.get, name, timeout=0.4)
+                values[name] = self.dac.get(name, timeout=0.4)
             except FiioError:
                 continue
         bands, names_by_slot = [], {}
@@ -289,7 +319,7 @@ class FiioApp(App):
             self.call_from_thread(self._status, str(exc), True)
         for slot in self.spec.name_slots:
             try:
-                names_by_slot[slot] = self._io(self.dac.get_preset_name, slot)
+                names_by_slot[slot] = self.dac.get_preset_name(slot)
             except FiioError:
                 continue
         self.call_from_thread(self._adopt, values, bands, names_by_slot)
@@ -581,17 +611,16 @@ class FiioApp(App):
         self.repaint()
         self.push_band(band)
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def push_setting(self, name, value):
-        self._io(self.dac.set, name, value)
+        self.dac.set(name, value)
         self.call_from_thread(self._status, f"{LABELS.get(name, name)} = {value}")
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def push_band(self, band):
-        self._io(self.dac.set_band, band["index"], band["freq"], band["gain"],
-                 band["q"], band["filter"])
+        self.dac.set_band(band["index"], band["freq"], band["gain"], band["q"], band["filter"])
         self.call_from_thread(
             self._status,
             f"band {band['index']}: {band['freq']} Hz {band['gain']:+.1f} dB "
@@ -635,11 +664,11 @@ class FiioApp(App):
         self.push_setting("eq-preset", value)
         self.load_bands_after_switch()
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def load_bands_after_switch(self):
         bands = self._read_bands()[1]
-        gain = self._io(self.dac.get, "eq-gain")
+        gain = self.dac.get("eq-gain")
         self.call_from_thread(self._after_switch, bands, gain)
 
     def _after_switch(self, bands, gain):
@@ -665,10 +694,10 @@ class FiioApp(App):
             return
         self.save_to(slot)
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def save_to(self, slot):
-        self._io(self.dac.set, "eq-save", slot)
+        self.dac.set("eq-save", slot)
         self.call_from_thread(self._status, f"saved current EQ to slot {slot}")
 
     def action_rename(self):
@@ -685,10 +714,10 @@ class FiioApp(App):
         box.focus()
         self._refresh_hint()
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def push_name(self, slot, text):
-        clean = self._io(self.dac.set_preset_name, slot, text)
+        clean = self.dac.set_preset_name(slot, text)
         self.call_from_thread(self._after_rename, slot, clean)
 
     def _after_rename(self, slot, clean):
@@ -826,13 +855,18 @@ class FiioApp(App):
         if self._selected_result() is entry:
             self._show_preview()
 
-    @work(thread=True, group="io")
+    @work(thread=True, group="net")
     @reporting
     def apply_profile(self, entry):
-        count = self._io(self.dac.band_count)
-        self._resolve(entry, count)
-        preamp, written = self._io(self.dac.write_profile, entry.get("preamp") or 0.0,
-                                   entry["bands"], count)
+        # resolved off the device thread: a slow network must not hold up edits
+        self._resolve(entry, len(self.bands) or 10)
+        self.call_from_thread(self.write_entry, entry)
+
+    @device_job
+    @reporting
+    def write_entry(self, entry):
+        count = self.dac.band_count()
+        preamp, written = self.dac.write_profile(entry.get("preamp") or 0.0, entry["bands"], count)
         self.call_from_thread(self._after_apply, entry, written, preamp, count)
 
     def _after_apply(self, entry, written, preamp, count):
