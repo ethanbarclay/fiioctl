@@ -18,8 +18,7 @@ if a protocol finding demands it.
 - Programs using the same device on Linux take turns, so one cannot read another's
   reply as its own or send a write too soon after another's.
 - A device that will not open is no longer always blamed on the udev rule. On Linux
-  the error says when the user has no access to the device, and otherwise that
-  another program may be using it.
+  the error says whether the device has gone or the user has no access to it.
 
 ## 0.2.0 - 2026-11-08
 

@@ -271,17 +271,22 @@ def test_a_named_device_that_will_not_open_is_named(monkeypatch):
         Dac.open()
 
 
-def test_a_hidraw_node_without_access_points_at_the_udev_rule(monkeypatch):
+@pytest.mark.parametrize("exists, access, message", [
+    (True, False, "no access to /dev/hidraw6.*udev rule"),
+    (True, True, "has access to it.*re-plugging"),
+    (False, False, "/dev/hidraw6 has gone"),
+])
+def test_a_hidraw_node_says_why_it_will_not_open(monkeypatch, exists, access, message):
     _unopenable(monkeypatch, "FIIO KA15", b"/dev/hidraw6")
-    monkeypatch.setattr(device.os, "access", lambda *_: False)
-    with pytest.raises(FiioError, match="no access to /dev/hidraw6.*udev rule"):
+    monkeypatch.setattr(device.os.path, "exists", lambda _p: exists)
+    monkeypatch.setattr(device.os, "access", lambda *_: access)
+    with pytest.raises(FiioError, match=message):
         Dac.open()
 
 
-def test_a_hidraw_node_with_access_is_described_as_busy(monkeypatch):
-    _unopenable(monkeypatch, "FIIO KA15", b"/dev/hidraw6")
-    monkeypatch.setattr(device.os, "access", lambda *_: True)
-    with pytest.raises(FiioError, match="Another program may be using it"):
+def test_a_path_that_cannot_be_inspected_lists_the_likely_causes(monkeypatch):
+    _unopenable(monkeypatch, "FIIO KA15", b"3-6.1:1.0")
+    with pytest.raises(FiioError, match="Another program may be using it.*udev rule"):
         Dac.open()
 
 

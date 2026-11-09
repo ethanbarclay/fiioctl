@@ -79,11 +79,16 @@ def _unnamed_error(info, detail=""):
 
 def _open_hint(path):
     """What to try when a device will not open; a hidraw path can say which it is."""
-    if path.startswith(b"/dev/") and not os.access(path, os.R_OK | os.W_OK):
-        return (f"Your user has no access to {path.decode()}: install the udev rule "
-                "(see README) and re-plug the device.")
-    return ("Another program may be using it. On Linux, check the udev rule is "
-            "installed (see README); on macOS re-plug the device.")
+    if not path.startswith(b"/dev/"):
+        return ("Another program may be using it. On Linux, check the udev rule is "
+                "installed (see README); on macOS re-plug the device.")
+    node = path.decode()
+    if not os.path.exists(path):
+        return f"{node} has gone, so check the device is still connected."
+    if not os.access(path, os.R_OK | os.W_OK):
+        return (f"Your user has no access to {node}: install the udev rule (see "
+                "README), re-plug the device, and check you are logged in at the machine.")
+    return "Your user has access to it, so try re-plugging the device."
 
 
 def _lock_for(path):
