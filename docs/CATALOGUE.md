@@ -53,8 +53,9 @@ Payload for both search endpoints:
 
 `deviceType` is FiiO's product id, from the bundle's `pX` table — **110 for the
 KA15**. `registry.Device.cloud_id` carries the known values. An empty
-`searchValue` returns everything for that device. Passing `deviceType: 0`
-returns nothing.
+`searchValue` lists that device's presets, but `/search-peq` stops at 30, and
+there is no lookup by preset id: a preset beyond those has to be searched for by
+name. Passing `deviceType: 0` returns nothing.
 
 `searchValue` matches **preset names, not headphone model names**. Searching
 "DT 177X" finds nothing even though the measurement database has that headphone,

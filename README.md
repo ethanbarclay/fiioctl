@@ -25,12 +25,12 @@ bands              10
 capabilities       eq, peq, preset-names, volume, filter, balance
 
 $ fiioctl eq search "hd 650"
- 0  Sennheiser HD 650  [oratory1990 / over-ear]
- 1  Sennheiser HD 650  [crinacle / GRAS 43AG-7 over-ear]
- 2  Sennheiser HD 650  [Kuulokenurkka / over-ear]
+ 0  Sennheiser HD 650  [autoeq / oratory1990 over-ear]
+ 1  Sennheiser HD 650  [autoeq / crinacle GRAS 43AG-7 over-ear]
+ 2  Sennheiser HD 650  [autoeq / Kuulokenurkka over-ear]
 
 $ fiioctl eq apply "hd 650" --slot user1 --save
-applied 'Sennheiser HD 650' (oratory1990): 10 bands, preamp -5.8 dB
+applied 'Sennheiser HD 650' (autoeq): 10 bands, preamp -5.8 dB
 
 $ fiioctl peq show
 global gain   -5.8 dB
@@ -155,17 +155,21 @@ and FiiO's measurement service — are in [docs/CATALOGUE.md](docs/CATALOGUE.md)
 
 ## Headphone EQ profiles
 
-Profiles come from [AutoEq](https://github.com/jaakkopasanen/AutoEq) — the same
-measurement data FiiO's own app credits as its source. The index (~850 KB) is
-cached locally, so search is instant and works offline after the first run.
-`--refresh` is not needed; the cache expires after 30 days.
+`eq search` and the terminal UI's library search the same three sources and list
+them together, best match first: FiiO's presets for your model, FiiO's measurement
+database, and [AutoEq](https://github.com/jaakkopasanen/AutoEq), the measurement
+data FiiO's own app credits as its source. Community presets always come last, so
+`eq apply` only picks one by default when nothing else matches.
 
-`eq apply` maps a profile onto the device's bands, clamps gains to what the
-hardware accepts, flattens any bands the profile does not use, and tells you if
-the profile had more bands than the device has.
+FiiO's presets are per model, so they are searched when a device is connected; to
+search them with nothing plugged in, name a model with `--product`. The indexes
+are cached locally, and a source that cannot be reached is skipped with a warning.
 
-AutoEq does not carry everything — Drop collaborations such as the DT 177X Go are
-absent from it. For those, use `fiioctl autoeq`, below.
+`eq apply` takes the same search and applies a result from any source. It maps a
+profile onto the device's bands, clamps gains to what the hardware accepts,
+flattens any bands the profile does not use, and tells you if the profile had more
+bands than the device has. A result's `id` from `eq search --json` also works in
+place of the search, and keeps naming the same profile as the results change.
 
 ## FiiO's measurement database (~4500 headphones)
 

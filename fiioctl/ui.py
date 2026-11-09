@@ -37,13 +37,8 @@ from textual.widgets import (
     Static,
 )
 
-from . import curve, eqdb, proto, registry
+from . import curve, library, proto, registry
 from .device import FiioError
-
-try:
-    from . import cloud
-except ImportError:  # pragma: no cover
-    cloud = None
 
 #: nudge per setting. "eq-gain" is special-cased to the device's own resolution
 #: (see Device.gain_step): a 0.5 dB step on hardware that stores whole decibels
@@ -784,51 +779,8 @@ class FiioApp(App):
     @work(thread=True, group="net")
     @reporting
     def run_search(self, query):
-        """Search all three sources: FiiO presets, FiiO measurements, AutoEq."""
-        found, problems = [], []
-        if cloud is not None and self.spec.cloud_id:
-            try:
-                found.extend(cloud.presets(self.spec.cloud_id, query))
-            except Exception as exc:  # noqa: BLE001 - a catalogue failure is non-fatal
-                problems.append(str(exc))
-        if cloud is not None:
-            try:
-                for row in cloud.find_measurements(query, limit=25):
-                    variant = f" ({row['config']})" if row.get("config") else ""
-                    found.append({"name": f"{row['productName']}{variant}",
-                                  "source": "fiio-autoeq",
-                                  "rig": row.get("source") or "",
-                                  "bands": None, "meas_id": row["id"]})
-            except Exception as exc:  # noqa: BLE001
-                problems.append(str(exc))
-        try:
-            for e in eqdb.search(query, limit=25):
-                found.append({"name": e["name"], "source": "autoeq",
-                              "rig": e.get("source", ""), "bands": None, "entry": e})
-        except OSError as exc:
-            problems.append(f"AutoEq unreachable: {exc}")
+        found, problems = library.search(query, self.spec.cloud_id)
         self.call_from_thread(self._show_results, found, problems)
-
-    def _resolve(self, entry, count):
-        """Fill in an entry's bands and preamp. Runs on a worker: may hit the network."""
-        if entry.get("bands") is not None:
-            return entry
-        if entry.get("meas_id") is not None:
-            if cloud is None:
-                raise FiioError("the FiiO catalogue needs: pip install 'fiioctl[cloud]'")
-            prof = cloud.auto_eq(entry["meas_id"], bands=count)
-            entry.update(bands=prof["bands"], preamp=prof["preamp"],
-                         description=prof["description"])
-        else:
-            prof = eqdb.profile(entry["entry"])
-            entry.update(bands=prof["bands"], preamp=prof["preamp"])
-        return entry
-
-    @staticmethod
-    def _key(entry):
-        if entry.get("meas_id") is not None:
-            return ("m", entry["meas_id"])
-        return ("a", entry["entry"]["path"])
 
     def _show_results(self, found, problems):
         self.results = found
@@ -857,7 +809,7 @@ class FiioApp(App):
             return
         bands = entry.get("bands")
         if bands is None:
-            cached = self.previews.get(self._key(entry))
+            cached = self.previews.get(entry["id"])
             if cached:
                 bands, entry["bands"] = cached["bands"], cached["bands"]
                 entry.setdefault("preamp", cached["preamp"])
@@ -873,12 +825,12 @@ class FiioApp(App):
     @work(thread=True, group="net")
     @reporting
     def fetch_preview(self, entry):
-        self._resolve(entry, len(self.bands) or 10)
+        library.resolve(entry, len(self.bands) or 10)
         self.call_from_thread(self._adopt_preview, entry)
 
     def _adopt_preview(self, entry):
-        self.previews[self._key(entry)] = {"bands": entry["bands"],
-                                           "preamp": entry.get("preamp", 0.0)}
+        self.previews[entry["id"]] = {"bands": entry["bands"],
+                                      "preamp": entry.get("preamp", 0.0)}
         if self._selected_result() is entry:
             self._show_preview()
 
@@ -886,7 +838,7 @@ class FiioApp(App):
     @reporting
     def apply_profile(self, entry):
         # resolved off the device thread: a slow network must not hold up edits
-        self._resolve(entry, len(self.bands) or 10)
+        library.resolve(entry, len(self.bands) or 10)
         self.call_from_thread(self.write_entry, entry)
 
     @device_job

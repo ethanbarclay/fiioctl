@@ -13,8 +13,7 @@ pytest.importorskip("textual")
 from textual.coordinate import Coordinate  # noqa: E402
 from textual.widgets import DataTable, Input, Static  # noqa: E402
 
-from fiioctl import registry  # noqa: E402
-from fiioctl import ui as ui_mod  # noqa: E402
+from fiioctl import eqdb, library, registry  # noqa: E402
 from fiioctl.device import Dac, FiioError  # noqa: E402
 from fiioctl.ui import FiioApp  # noqa: E402
 
@@ -85,13 +84,15 @@ def dac():
 
 
 class StubEqdb:
-    """Stands in for the eqdb module inside the ui namespace.
+    """Stands in for the eqdb module inside the library namespace.
 
-    Replacing `ui.eqdb` wholesale rather than patching attributes on the real
-    module keeps two hazards away: other test files that call `eqdb.search`
+    Replacing `library.eqdb` wholesale rather than patching attributes on the
+    real module keeps two hazards away: other test files that call `eqdb.search`
     directly are unaffected, and a worker thread that outlives its test cannot
     reach the network once the patch is reverted.
     """
+
+    relevance = staticmethod(eqdb.relevance)
 
     @staticmethod
     def search(query, limit=40):
@@ -110,11 +111,23 @@ class StubEqdb:
         return squash(text)
 
 
+class StubCloud:
+    """Stands in for the cloud module: no FiiO results, and no network."""
+
+    @staticmethod
+    def presets(_device_type, _query="", official=True, community=True):
+        return []
+
+    @staticmethod
+    def find_measurements(_query, limit=25):
+        return []
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     """Keep the library page from touching the network."""
-    monkeypatch.setattr(ui_mod, "cloud", None)
-    monkeypatch.setattr(ui_mod, "eqdb", StubEqdb)
+    monkeypatch.setattr(library, "cloud", StubCloud)
+    monkeypatch.setattr(library, "eqdb", StubEqdb)
 
 
 async def ready(app, pilot):

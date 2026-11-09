@@ -9,6 +9,10 @@ if a protocol finding demands it.
 ### Changed
 
 - `--trace` and `--dry-run` packet logs go to stderr rather than stdout.
+- `eq search` now covers everything the TUI's library does: FiiO's presets for
+  the model, FiiO's measurements and AutoEq, merged and ranked the same way in
+  both. `eq apply` applies a result from any of them, by search or by id. Its
+  `--json` rows gain `id` and `index`, and `source` now names the source.
 
 ### Fixed
 
