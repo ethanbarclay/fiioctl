@@ -11,6 +11,10 @@ if a protocol finding demands it.
 - The Linux udev rule is now `70-fiio.rules`. Named `99-fiio.rules`, it ran after
   systemd's `73-seat-late.rules`, so `uaccess` never granted the logged-in user
   access. Anyone who installed the old file should delete it and install this one.
+- Linux now uses hidapi's hidraw backend. The default libusb one detached the
+  kernel's HID driver on every command, could not read a device's name without
+  permission, and reported no usage page, so the control interface could not be
+  picked by it.
 
 ## 0.2.0 - 2026-11-08
 

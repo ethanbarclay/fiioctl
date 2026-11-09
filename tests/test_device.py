@@ -207,6 +207,24 @@ def test_a_named_device_that_will_not_open_is_named(monkeypatch):
         Dac.open()
 
 
+@pytest.mark.parametrize("platform, available, expected", [
+    ("linux", {"hidraw", "hid"}, "hidraw"),
+    ("linux", {"hid"}, "hid"),
+    ("darwin", {"hidraw", "hid"}, "hid"),
+    ("win32", {"hid"}, "hid"),
+    ("linux", set(), None),
+])
+def test_the_backend_suits_the_platform(monkeypatch, platform, available, expected):
+    def load(name):
+        if name not in available:
+            raise ImportError(name)
+        return name
+
+    monkeypatch.setattr(device.sys, "platform", platform)
+    monkeypatch.setattr(device.importlib, "import_module", load)
+    assert device._backend() == expected
+
+
 @pytest.mark.parametrize("kwargs", [{"product": "ka15"}, {"serial": "ABC123"}])
 def test_filters_do_not_hide_a_device_with_no_readable_name(monkeypatch, kwargs):
     _unopenable(monkeypatch, "")

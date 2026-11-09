@@ -7,16 +7,26 @@ and correlating a reply with the command that asked for it.
 """
 
 import contextlib
+import importlib
 import math
 import sys
 import time
 
 from . import proto, registry
 
-try:  # kept optional so `fiioctl schema` and `--help` work without hidapi present
-    import hid
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    hid = None
+
+def _backend():
+    """The hidapi module to use, or None if hidapi is not installed."""
+    # On Linux `hid` is the libusb backend, which detaches the kernel driver on
+    # every open, cannot read a name without permission and reports no usage page.
+    names = ("hidraw", "hid") if sys.platform == "linux" else ("hid",)
+    for name in names:
+        with contextlib.suppress(ImportError):
+            return importlib.import_module(name)
+    return None
+
+
+hid = _backend()  # optional so `fiioctl schema` and `--help` work without hidapi
 
 
 class FiioError(RuntimeError):
@@ -51,7 +61,7 @@ def _clamp(value, limits):
 
 def _unnamed_error(info, detail=""):
     """Why a device with no readable name cannot be used."""
-    # without permission, hidapi's Linux backend cannot read the name either,
+    # without permission, hidapi's libusb backend cannot read the name either,
     # so the model is unknown and no profile can be matched
     usb_id = f"{info.get('vendor_id', 0):04x}:{info.get('product_id', 0):04x}"
     return FiioError(
