@@ -63,7 +63,7 @@ hidapi library, so there is nothing to install by hand on any platform.
 > that: `pip uninstall hid`.
 
 If you use **pyenv-win**, console scripts land in the version's `Scripts`
-directory, which is not on `PATH` — run `pyenv rehash` once after installing to
+directory, which is not on `PATH`, so run `pyenv rehash` once after installing to
 generate the shim, otherwise `fiioctl` is "not recognized".
 
 On Linux, allow non-root access to the device. The rule is not part of the
@@ -93,7 +93,7 @@ Then re-plug the DAC. On macOS and Windows no setup is needed.
 | Escape hatch | `fiioctl raw <cmd> [hex] [--read]`, global `--trace` |
 | Machine use | `fiioctl schema`, `fiioctl batch`, `--json` on everything |
 
-`fiioctl get`/`set` cover every decoded command — volume, volume limit, line-out
+`fiioctl get`/`set` cover every decoded command: volume, volume limit, line-out
 switch, channel balance, DAC filter, EQ master switch, EQ global gain, indicator
 LED, screen orientation, and the microphone controls on devices that have one.
 Run `fiioctl set --help` for the current list.
@@ -105,7 +105,7 @@ pip install 'fiioctl[all]'
 fiioctl ui
 ```
 
-Four pages down the left — **Device**, **Equaliser**, **EQ slots**, **Library** —
+Four pages down the left (**Device**, **Equaliser**, **EQ slots**, **Library**),
 switched with `1`–`4`. One rule everywhere: **arrow to a thing, press `+` or `-`
 to change it.** No buttons, no forms to submit, and the hint line at the bottom
 always names what is selected and what the step is, so there is nothing to
@@ -123,14 +123,14 @@ memorise.
  + / - change by 0.5 dB   PgUp / PgDn by 5 dB   Tab switch   1-4 pages   ? keys
 ```
 
-- **Device** — every onboard setting the model exposes: volume, volume limit,
+- **Device.** Every onboard setting the model exposes: volume, volume limit,
   line-out switch, channel balance, DAC filter, EQ preset, global gain, and the
   LED/screen/microphone controls on devices that have them.
-- **Equaliser** — the band table with a live response curve, computed from the
+- **Equaliser.** The band table with a live response curve, computed from the
   same RBJ biquads the official app uses.
-- **EQ slots** — every preset slot with its stored name and which one is active.
+- **EQ slots.** Every preset slot with its stored name and which one is active.
   `Enter` loads one, `n` renames a user slot, `s` saves the current EQ into it.
-- **Library** — search AutoEq *and* FiiO's catalogue together, with a curve
+- **Library.** Search AutoEq *and* FiiO's catalogue together, with a curve
   preview for the highlighted result before you commit it.
 
 `u` undoes the last write, `r` re-reads from the device, `?` lists every key.
@@ -138,7 +138,7 @@ memorise.
 ## FiiO's own preset catalogue
 
 `fiioctl cloud` reads the presets FiiO and other users publish for your exact
-model — the same lists the official web app shows, anonymously and read-only:
+model, the same lists the official web app shows, anonymously and read-only:
 
 ```console
 $ fiioctl cloud list
@@ -150,8 +150,8 @@ $ fiioctl cloud list
 ```
 
 `cloud show <n>` prints the bands and curve; `cloud apply <n>` writes it. Needs
-`pip install 'fiioctl[cloud]'`. Protocol details — including the AES/RSA envelope
-and FiiO's measurement service — are in [docs/CATALOGUE.md](docs/CATALOGUE.md).
+`pip install 'fiioctl[cloud]'`. Protocol details, including the AES/RSA envelope
+and FiiO's measurement service, are in [docs/CATALOGUE.md](docs/CATALOGUE.md).
 
 ## Headphone EQ profiles
 
@@ -182,8 +182,8 @@ $ fiioctl autoeq refresh
 refreshed: 4544 measurements, 4578 targets
 
 $ fiioctl autoeq search "dt177x go"
-   714  Beyerdynamic DT 177X Go  [leather earpads]  —  oratory1990
-   715  Beyerdynamic DT 177X Go  [velour earpads]  —  oratory1990
+   714  Beyerdynamic DT 177X Go  [leather earpads]  -  oratory1990
+   715  Beyerdynamic DT 177X Go  [velour earpads]  -  oratory1990
 
 $ fiioctl autoeq show 714
 Beyerdynamic DT 177X Go (leather earpads)  [fiio-autoeq/oratory1990]
@@ -197,8 +197,8 @@ Beyerdynamic DT 177X Go (leather earpads)  [fiio-autoeq/oratory1990]
 $ fiioctl autoeq apply 714 --save
 ```
 
-The target curve is chosen the way FiiO chooses it — matching the measurement's
-rig and form factor against their own recommendation table — or pick one yourself
+The target curve is chosen the way FiiO chooses it, matching the measurement's
+rig and form factor against their own recommendation table, or pick one yourself
 with `--target <id>` after browsing `fiioctl autoeq targets harman`.
 
 The two indexes (~800 KB) are cached locally for 14 days; `autoeq refresh`
@@ -210,8 +210,8 @@ then cached, rather than mirroring ~90 MB of data nobody asked for.
 Every command takes `--json` and returns a stable exit code: `0` ok, `2` usage,
 `3` device error, `4` data error.
 
-`fiioctl schema` dumps the entire model — framing, every command with its ID,
-codec, range and capability, the per-device registry, and the batch protocol —
+`fiioctl schema` dumps the entire model (framing, every command with its ID,
+codec, range and capability, the per-device registry, and the batch protocol)
 as one JSON document. That is the intended way for an agent to discover what it
 can do, instead of parsing `--help`.
 
@@ -230,7 +230,7 @@ $ printf '%s\n' \
 ```
 
 `--dry-run` builds and prints packets without writing, and works with no device
-attached — useful for testing and for inspecting what a command would send:
+attached. That is useful for testing and for inspecting what a command would send:
 
 ```console
 $ fiioctl --dry-run peq set 2 --freq 9140 --gain 5.6 --q 3.46
@@ -246,7 +246,7 @@ Adding a decoded command is one line in `fiioctl/registry.py`:
 "my-setting": Cmd(42, "u8", help="..."),
 ```
 
-Adding a device is one entry in the same file's `DEVICES` table — report ID,
+Adding a device is one entry in the same file's `DEVICES` table: report ID,
 command pacing, gain range, preset map, renameable slots. No code changes.
 
 Undecoded commands are listed in `registry.UNMAPPED` and reachable right away:
@@ -298,7 +298,7 @@ Be aware of what has and has not been checked:
 - **Write path verified on hardware**: `autoeq apply … --save` wrote all ten
   bands and read back identically, `eq save` persisted to a user slot, and
   `eq name` round-tripped. Round-tripping values through the device is also what
-  turned up two defects since fixed — the global gain's whole-decibel
+  turned up two defects since fixed: the global gain's whole-decibel
   quantization and the uncleared preset-name field (both in
   [docs/PROTOCOL.md](docs/PROTOCOL.md)).
 - **Not yet exercised**: `factory-reset`, and `peq clear` on a device with
@@ -310,7 +310,7 @@ Be aware of what has and has not been checked:
 ### Devices it cannot drive
 
 FiiO's own app uses three different transports, and this project implements one
-of them — the shared HID command set. Two groups are therefore out of reach, and
+of them, the shared HID command set. Two groups are therefore out of reach, and
 `fiioctl` says so rather than failing obscurely:
 
 | | Devices |
@@ -326,11 +326,14 @@ error: FIIO BTR15: the official app drives this model through a different
 ```
 
 Everything else the app supports uses the same command numbers, so volume, EQ,
-presets, filter and balance should work — see
+presets, filter and balance should work; see
 [docs/PROTOCOL.md](docs/PROTOCOL.md) for the evidence.
 
 Use `--dry-run` to inspect packets without writing, and `--trace` to watch real
 traffic. `fiioctl devices` and `fiioctl info` report which profile was matched.
+
+Own anything other than a KA15? [CONTRIBUTING.md](CONTRIBUTING.md) explains how to
+test it, and what it would take to support the models above.
 
 ## TODO
 
@@ -338,7 +341,7 @@ traffic. `fiioctl devices` and `fiioctl info` report which profile was matched.
   implement it. Held back deliberately: it is the only operation that can brick
   the device, so it needs its own verification pass rather than being bundled in
   with settings control.
-- Bluetooth controls (codec selection, pairing) for the BTR/BT11 devices — the
+- Bluetooth controls (codec selection, pairing) for the BTR/BT11 devices. The
   commands live in the app's `bt11-cmd` and `tengtai-controller` chunks.
 - The dynamics processor (compressor/limiter) commands, 53–57.
 
@@ -349,7 +352,7 @@ Protocol derived from the FiiO Control web app as vendored by
 hardware. Headphone measurements by
 [AutoEq](https://github.com/jaakkopasanen/AutoEq).
 
-MIT licensed — see [LICENSE](LICENSE), and [ATTRIBUTION.md](ATTRIBUTION.md) for
+MIT licensed. See [LICENSE](LICENSE), and [ATTRIBUTION.md](ATTRIBUTION.md) for
 full provenance and the licences of everything consulted. Not affiliated with or
 endorsed by FiiO.
 
