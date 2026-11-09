@@ -70,7 +70,7 @@ On Linux, allow non-root access to the device. The rule is not part of the
 installed package, so fetch it:
 
 ```bash
-curl -sO https://raw.githubusercontent.com/ethanbarclay/fiioctl/main/packaging/70-fiio.rules
+curl -fsSO https://raw.githubusercontent.com/ethanbarclay/fiioctl/main/packaging/70-fiio.rules
 sudo install -m644 70-fiio.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
