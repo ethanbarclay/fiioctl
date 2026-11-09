@@ -455,7 +455,11 @@ async def test_enter_applies_a_profile_to_the_device(dac):
         assert dac.bands[0]["freq"] == 105 and dac.bands[0]["filter"] == "low-shelf"
         # the profile had 2 bands; the remaining 8 must be flattened
         assert all(b["gain"] == 0.0 for b in dac.bands[2:])
+        # what is on screen has to be what is now on the device
         assert app.settings["eq-gain"] == -7.0
+        table = app.query_one("#bands", DataTable)
+        assert table.get_row_at(0)[1] == "105 Hz" and table.get_row_at(0)[4] == "low-shelf"
+        assert table.get_row_at(2)[2] == "+0.0 dB"
 
 
 async def test_reload_never_writes(dac):

@@ -839,6 +839,7 @@ class FiioApp(App):
         self.settings["eq-gain"] = preamp
         self.bands = written
         dropped = max(0, len(entry["bands"]) - count)
+        self.repaint()
         self.action_page("eq")
         self._status(f"applied '{entry['name']}'"
                      + (f" ({dropped} band(s) dropped, device has {count})" if dropped else "")
