@@ -3,6 +3,9 @@
 #   sudo udevadm control --reload-rules && sudo udevadm trigger
 # ...and re-plug the device.
 #
+# The name has to sort before 73-seat-late.rules, which is where systemd acts on
+# the uaccess tag. A later name leaves the user with no access at all.
+#
 # Vendor and product IDs mirror the official app's WebHID filters; see
 # docs/PROTOCOL.md.
 

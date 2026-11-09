@@ -4,6 +4,14 @@ Notable changes per release. Versions follow [semantic versioning](https://semve
 with the caveat that a 0.x line can break its CLI surface between minor versions
 if a protocol finding demands it.
 
+## Unreleased
+
+### Fixed
+
+- The Linux udev rule is now `70-fiio.rules`. Named `99-fiio.rules`, it ran after
+  systemd's `73-seat-late.rules`, so `uaccess` never granted the logged-in user
+  access. Anyone who installed the old file should delete it and install this one.
+
 ## 0.2.0 - 2026-11-08
 
 Failed writes are now noticed, values a setting cannot hold are refused, the TUI
