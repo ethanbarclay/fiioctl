@@ -255,15 +255,19 @@ def _apply_profile(dac, prof, args):
     slot = None
     if args.slot is not None:
         slot = int(dac.spec.presets.get(str(args.slot).lower(), args.slot))
+    save_to = slot
     if args.save:
-        # before anything is written, not after the EQ has already changed
-        save_to = dac.get("eq-preset") if slot is None else slot
-        dac.require_user_slot(save_to)
+        # before anything is written, not after the EQ has already changed. A dry
+        # run cannot read the active preset, but should still show its frames.
+        if slot is None and not dac.dry:
+            save_to = dac.get("eq-preset")
+        if save_to is not None:
+            dac.require_user_slot(save_to)
     if slot is not None:
         dac.set("eq-preset", slot)
     preamp, _ = dac.write_profile(prof["preamp"], bands, count)
     if args.save:
-        dac.set("eq-save", save_to)
+        dac.set("eq-save", dac.get("eq-preset") if save_to is None else save_to)
     return {
         "applied": len(bands),
         "flattened": count - len(bands),

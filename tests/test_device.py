@@ -218,3 +218,10 @@ def test_a_named_device_that_does_not_match_is_still_no_match(monkeypatch):
     _unopenable(monkeypatch, "FIIO KA17")
     with pytest.raises(FiioError, match="no FiiO device matched"):
         Dac.open(product="ka15")
+
+
+def test_a_dry_run_with_save_still_shows_its_writes(capsys):
+    prof = {"preamp": -3.0, "bands": [{"freq": 100, "gain": 1.0, "q": 1.0, "filter": "peak"}]}
+    with pytest.raises(FiioError, match="cannot read"):
+        cli._apply_profile(_dry(), prof, SimpleNamespace(slot=None, save=True))
+    assert "".join(capsys.readouterr()).count("aa 0a") == 1 + 10  # pre-amp and every band
