@@ -3,18 +3,19 @@
 #   sudo udevadm control --reload-rules && sudo udevadm trigger
 # ...and re-plug the device.
 #
-# Vendor IDs mirror the official app's WebHID filters; see docs/PROTOCOL.md.
+# Vendor and product IDs mirror the official app's WebHID filters; see
+# docs/PROTOCOL.md.
 
 # FiiO / JadeAudio / Snowsky
 KERNEL=="hidraw*", ATTRS{idVendor}=="2972", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="2972", MODE="0660", TAG+="uaccess"
 
 # Rebadged controllers used by some models
-KERNEL=="hidraw*", ATTRS{idVendor}=="3302", MODE="0660", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="3302", MODE="0660", TAG+="uaccess"
-KERNEL=="hidraw*", ATTRS{idVendor}=="0a12", MODE="0660", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0a12", MODE="0660", TAG+="uaccess"
-KERNEL=="hidraw*", ATTRS{idVendor}=="0666", MODE="0660", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0666", MODE="0660", TAG+="uaccess"
-KERNEL=="hidraw*", ATTRS{idVendor}=="31b2", MODE="0660", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="31b2", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="3302", ATTRS{idProduct}=="3bc[0-2]", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="3302", ATTRS{idProduct}=="3bc[0-2]", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0a12", ATTRS{idProduct}=="4007", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0a12", ATTRS{idProduct}=="4007", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0666", ATTRS{idProduct}=="0888", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0666", ATTRS{idProduct}=="0888", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="31b2", ATTRS{idProduct}=="fff8", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="31b2", ATTRS{idProduct}=="fff8", MODE="0660", TAG+="uaccess"

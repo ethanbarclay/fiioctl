@@ -232,28 +232,17 @@ def refresh_indexes():
 
 def find_measurements(query, limit=25, entries=None):
     """Search the measurement index, forgiving punctuation and spacing."""
-    from .eqdb import squash
+    from .eqdb import relevance, squash
     rows = entries if entries is not None else measurements()
-    flat = squash(query)
-    if not flat:
+    if not squash(query):
         return []
-    tokens = [squash(t) for t in query.split() if squash(t)]
     scored = []
     for row in rows:
-        name = squash(row.get("productName") or "")
-        if not name:
+        product = row.get("productName") or ""
+        score = relevance(query, product)
+        if not score:
             continue
-        if name == flat:
-            score = 4
-        elif name.startswith(flat):
-            score = 3
-        elif tokens and all(t in name for t in tokens):
-            score = 2
-        elif flat in name:
-            score = 1
-        else:
-            continue
-        scored.append((-score, len(name), row.get("productName") or "", row))
+        scored.append((-score, len(squash(product)), product, row))
     scored.sort(key=lambda r: r[:3])
     return [r[3] for r in scored[:limit]]
 
@@ -263,11 +252,14 @@ def recommended_target(measurement, targets_by_label=None, compat=None):
     labels = targets_by_label or {t["label"]: t["id"] for t in target_list()}
     source = (measurement.get("source") or "").lower()
     form = (measurement.get("formFactor") or "").lower()
+    rig = (measurement.get("rig") or "").lower()
 
     def matches(entries):
         for entry in entries or []:
+            # an entry naming no rig covers every rig that source measures on
             if (entry.get("source") or "").lower() == source and \
-                    (entry.get("form") or "").lower() == form:
+                    (entry.get("form") or "").lower() == form and \
+                    (entry.get("rig") or "").lower() in ("", rig):
                 return True
         return False
 

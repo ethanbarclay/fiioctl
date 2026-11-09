@@ -59,6 +59,43 @@ def test_abort_carries_its_own_exit_code(monkeypatch, capsys):
     assert "pick a slot first" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("argv", [
+    ["info", "--json"],
+    ["state", "--json"],
+    ["--json", "info"],
+    ["eq", "search", "hd650", "--json"],
+    ["peq", "show", "--json"],
+    ["autoeq", "search", "--json", "hd650"],
+])
+def test_json_is_accepted_either_side_of_the_subcommand(argv):
+    assert cli.build_parser().parse_args(argv).json is True
+
+
+def test_json_stays_off_unless_asked_for():
+    assert cli.build_parser().parse_args(["info"]).json is False
+
+
+def test_packet_log_does_not_corrupt_json(monkeypatch, capsys):
+    import json
+
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    assert cli.main(["--dry-run", "set", "volume", "30", "--json"]) == cli.EXIT_OK
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["volume"] == 30
+    assert captured.err.startswith("TX ")
+
+
+def test_out_of_range_volume_is_refused_before_anything_is_sent(monkeypatch, capsys):
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    assert cli.main(["--dry-run", "set", "volume", "-1"]) == cli.EXIT_DEVICE
+    captured = capsys.readouterr()
+    assert "outside 0..255" in captured.out and "TX" not in captured.err
+
+
 def test_abort_reports_as_json_too(monkeypatch, capsys):
     import json
 

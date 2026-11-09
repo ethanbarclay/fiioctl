@@ -10,8 +10,15 @@ web app bundle (see docs/PROTOCOL.md).
 
 from dataclasses import dataclass, field
 
-#: USB vendor IDs the official app's WebHID filters accept (`T5e` in the bundle).
-VENDORS = (0x2972, 0x3302, 0x0A12, 0x0666, 0x31B2)
+#: USB vendor ID -> the product IDs the official app's WebHID filters accept
+#: (`T5e` in the bundle). None means any product from that vendor.
+VENDORS = {
+    0x2972: None,
+    0x3302: (15296, 15297, 15298),
+    0x0A12: (16391,),
+    0x0666: (2184,),
+    0x31B2: (65528,),
+}
 
 
 @dataclass(frozen=True)

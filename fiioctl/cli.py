@@ -11,7 +11,7 @@ import json
 import os
 import sys
 
-from . import __version__, curve, eqdb, proto, registry
+from . import __version__, curve, eqdb, library, proto, registry
 from .device import Dac, FiioError, candidates
 
 EXIT_OK, EXIT_USAGE, EXIT_DEVICE, EXIT_DATA = 0, 2, 3, 4
@@ -255,15 +255,7 @@ def _apply_profile(dac, prof, args):
     if args.slot is not None:
         slot = dac.spec.presets.get(str(args.slot).lower(), args.slot)
         dac.set("eq-preset", int(slot))
-    lo, hi = dac.spec.gain_range
-    # round the pre-amp downward: the device truncates toward zero, and keeping
-    # less attenuation than the profile asked for is what clips
-    preamp = dac.snap_gain(prof["preamp"], safe=True)
-    dac.set("eq-gain", preamp)
-    for i, b in enumerate(bands):
-        dac.set_band(i, b["freq"], max(lo, min(hi, b["gain"])), b["q"], b["filter"])
-    for i in range(len(bands), count):
-        dac.set_band(i, 1000, 0.0, 0.7, "peak")  # flatten unused bands
+    preamp, _ = dac.write_profile(prof["preamp"], bands, count)
     if args.save:
         dac.set("eq-save", dac.get("eq-preset") if args.slot is None else int(slot))
     return {
@@ -276,16 +268,42 @@ def _apply_profile(dac, prof, args):
     }
 
 
-def cmd_eq_search(args):
+def _catalogue_id(args):
+    """FiiO catalogue id of the model in play, without opening the device."""
+    if args.product:
+        return registry.match(args.product).cloud_id
     try:
-        results = eqdb.search(args.query, limit=args.limit)
-    except OSError as exc:
-        raise Abort(EXIT_DATA, f"could not reach AutoEq index: {exc}") from exc
+        infos = candidates()
+    except FiioError:
+        return None
+    ids = (registry.match(i.get("product_string")).cloud_id for i in infos
+           if not args.serial or i.get("serial_number") == args.serial)
+    return next((cloud_id for cloud_id in ids if cloud_id), None)
+
+
+def _search_library(query, cloud_id, limit):
+    """Search everything, warning on stderr about any source that failed."""
+    found, problems = library.search(query, cloud_id, limit=limit)
+    if problems and not found:
+        raise Abort(EXIT_DATA, "; ".join(problems))
+    for problem in problems:
+        print(f"warning: {problem}", file=sys.stderr)
+    return found
+
+
+def cmd_eq_search(args):
+    cloud_id = _catalogue_id(args)
+    if not cloud_id:
+        print("warning: no known device connected, so FiiO's presets for it were not "
+              "searched; name a model with --product", file=sys.stderr)
+    results = _search_library(args.query, cloud_id, args.limit)
     if not results:
         emit([], args.json, "no match")
         return EXIT_DATA
     if args.json:
-        emit(results, True)
+        emit([{"index": n, "id": r["id"], "name": r["name"], "source": r["source"],
+               "rig": r["rig"], "bands": len(r["bands"]) if r["bands"] else None}
+              for n, r in enumerate(results)], True)
     else:
         for n, r in enumerate(results):
             # ASCII only: Windows consoles default to a codepage that mangles dashes.
@@ -293,19 +311,30 @@ def cmd_eq_search(args):
     return EXIT_OK
 
 
+def _choose_result(args, cloud_id):
+    """The result `eq apply` means: an id from `eq search`, or a query and index."""
+    named = library.lookup(args.query, cloud_id)
+    if named is not None:
+        return named
+    results = _search_library(args.query, cloud_id,
+                              max(args.index + 1, library.DEFAULT_LIMIT))
+    if not results:
+        raise Abort(EXIT_DATA, "no match")
+    if not 0 <= args.index < len(results):
+        raise Abort(EXIT_USAGE, f"no result {args.index}; the search found {len(results)}")
+    return results[args.index]
+
+
 def cmd_eq_apply(args):
-    try:
-        results = eqdb.search(args.query, limit=max(args.index + 1, 5))
-        if not results:
-            raise Abort(EXIT_DATA, "no match")
-        entry = results[args.index]
-        prof = eqdb.profile(entry)
-    except (OSError, ValueError, IndexError) as exc:
-        raise Abort(EXIT_DATA, f"could not load profile: {exc}") from exc
     with connect(args) as dac:
-        out = {"profile": entry["name"], "source": entry["source"],
-               **_apply_profile(dac, prof, args)}
-    emit(out, args.json, f"applied '{entry['name']}' ({entry['source']}): "
+        count = dac.band_count()
+        try:
+            result = library.resolve(_choose_result(args, dac.spec.cloud_id), count)
+        except OSError as exc:
+            raise Abort(EXIT_DATA, f"could not load profile: {exc}") from exc
+        out = {"profile": result["name"], "source": result["source"], "id": result["id"],
+               **_apply_profile(dac, result, args)}
+    emit(out, args.json, f"applied '{result['name']}' ({result['source']}): "
          f"{out['applied']} bands, preamp {out['preamp']:+.1f} dB"
          + (f", dropped {len(out['dropped'])} (device has {out['applied']} bands)"
             if out["dropped"] else ""))
@@ -688,20 +717,33 @@ def _group_help(parser):
     return show
 
 
+class SubParser(argparse.ArgumentParser):
+    """A subcommand parser that also takes --json, as the docs say every one does.
+
+    The default is suppressed so a subcommand that was not given the flag leaves
+    alone a --json already seen before it.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                          help="emit JSON")
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="fiioctl", description="Control FiiO USB DACs over HID.",
         epilog="Run 'fiioctl schema' for a machine-readable description of every command.")
     p.add_argument("--version", action="version", version=f"fiioctl {__version__}")
     p.add_argument("--json", action="store_true", help="emit JSON")
-    p.add_argument("--trace", action="store_true", help="log every HID packet to stdout")
+    p.add_argument("--trace", action="store_true", help="log every HID packet to stderr")
     p.add_argument("--serial", help="select device by USB serial number")
     p.add_argument("--product", help="select device by product-string substring")
     p.add_argument("--dry-run", action="store_true",
                    help="build and show packets without writing to the device")
     p.add_argument("--force", action="store_true",
                    help="talk to a model whose transport is unsupported anyway")
-    sub = p.add_subparsers(dest="cmd", metavar="COMMAND")
+    sub = p.add_subparsers(dest="cmd", metavar="COMMAND", parser_class=SubParser)
     p.set_defaults(fn=_group_help(p))
 
     sub.add_parser("devices", help="list connected FiiO HID interfaces"
@@ -736,12 +778,12 @@ def build_parser():
     sv = eqs.add_parser("save", help="persist the current EQ into a slot")
     sv.add_argument("slot", nargs="?", type=int)
     sv.set_defaults(fn=cmd_eq_save)
-    se = eqs.add_parser("search", help="search the AutoEq headphone database")
+    se = eqs.add_parser("search", help="search FiiO's presets, its measurements and AutoEq")
     se.add_argument("query")
-    se.add_argument("--limit", type=int, default=20)
+    se.add_argument("--limit", type=int, default=library.DEFAULT_LIMIT)
     se.set_defaults(fn=cmd_eq_search)
-    ap = eqs.add_parser("apply", help="apply a headphone profile from the database")
-    ap.add_argument("query")
+    ap = eqs.add_parser("apply", help="apply a result from `eq search`, whatever its source")
+    ap.add_argument("query", help="the same search, or a result's id from `eq search --json`")
     ap.add_argument("--index", type=int, default=0, help="which search result to use")
     add_apply_flags(ap)
     ap.set_defaults(fn=cmd_eq_apply)

@@ -8,6 +8,7 @@ and correlating a reply with the command that asked for it.
 
 import contextlib
 import math
+import sys
 import time
 
 from . import proto, registry
@@ -26,6 +27,11 @@ class FiioError(RuntimeError):
 #: inside the encoder and raise a bare ValueError, or silently truncate.
 INTEGER_CODECS = ("u8", "u16", "balance")
 
+#: what an integer codec can carry. The encoders mask to the field width, so
+#: without this a command with no declared range would wrap: volume -1 goes out
+#: as 0xFF, the loudest value there is.
+CODEC_LIMITS = {"u8": (0, 0xFF), "u16": (0, 0xFFFF)}
+
 
 def _integral(name, value):
     """Require a whole number, so bad input fails as a FiioError not a traceback."""
@@ -33,9 +39,14 @@ def _integral(name, value):
         number = float(value)
     except (TypeError, ValueError):
         raise FiioError(f"{name} must be a whole number; got {value!r}") from None
-    if number != int(number):
+    if not math.isfinite(number) or number != int(number):
         raise FiioError(f"{name} must be a whole number; got {value!r}")
     return int(number)
+
+
+def _clamp(value, limits):
+    lo, hi = limits
+    return max(lo, min(hi, value))
 
 
 def _hid():
@@ -48,7 +59,10 @@ def candidates():
     """All HID interfaces that could be a FiiO control endpoint."""
     out = []
     for info in _hid().enumerate():
-        if info.get("vendor_id") in registry.VENDORS:
+        # only 0x2972 is FiiO's own; the others are controller vendors whose
+        # unrelated products must not be mistaken for a DAC
+        products = registry.VENDORS.get(info.get("vendor_id"), ())
+        if products is None or info.get("product_id") in products:
             out.append(info)
     return out
 
@@ -148,6 +162,11 @@ class Dac:
 
     # -- raw I/O ------------------------------------------------------------
 
+    @staticmethod
+    def _log(direction, data):
+        # stderr, so a packet log cannot corrupt the JSON on stdout
+        print(f"{direction} {data.hex(' ')}", file=sys.stderr)
+
     def _pace(self):
         wait = self.spec.interval - (time.monotonic() - self._last)
         if wait > 0:
@@ -156,7 +175,7 @@ class Dac:
     def _write(self, packet):
         buf = bytes([self.spec.report_id]) + packet
         if self.dry:
-            print(f"TX {buf.hex(' ')}")
+            self._log("TX", buf)
             return
         self._pace()
         lens = (self._wlen,) if self._wlen else self.WRITE_LENS
@@ -164,14 +183,18 @@ class Dac:
         for n in lens:
             out = buf.ljust(n, b"\x00") if n else buf
             try:
-                self.handle.write(out)
+                written = self.handle.write(out)
             except (OSError, ValueError) as exc:
                 last = exc
+                continue
+            # hidapi reports a failed write by returning -1, not by raising
+            if written < 0:
+                last = f"hid_write returned {written}"
                 continue
             self._wlen = n
             self._last = time.monotonic()
             if self.trace:
-                print(f"TX {out.hex(' ')}")
+                self._log("TX", out)
             return
         raise FiioError(f"write failed: {last}")
 
@@ -196,7 +219,7 @@ class Dac:
             if not report:
                 continue
             if self.trace:
-                print(f"RX {bytes(report).hex(' ')}")
+                self._log("RX", bytes(report))
             parsed = proto.parse(report)
             if parsed and parsed[0] == cmd:
                 return parsed[1]
@@ -277,11 +300,18 @@ class Dac:
         if name == "eq-gain":
             return self.snap_gain(value)
 
+        if cmd.codec == "bool":
+            try:
+                return proto.parse_bool(value)
+            except ValueError as exc:
+                raise FiioError(f"{name}: {exc}") from None
+
         if cmd.codec in INTEGER_CODECS:
             value = _integral(name, value)
 
-        if cmd.rng is not None and cmd.codec != "bool":
-            lo, hi = cmd.rng
+        limits = cmd.rng if cmd.rng is not None else CODEC_LIMITS.get(cmd.codec)
+        if limits is not None:
+            lo, hi = limits
             if not lo <= float(value) <= hi:
                 raise FiioError(f"{name}={value} outside {lo}..{hi}")
         return value
@@ -327,10 +357,41 @@ class Dac:
         return proto.dec_band(self.request(registry.BAND_CMD, bytes([index])))
 
     def set_band(self, index, freq, gain, q, filter_type=0):
+        index = _integral("band index", index)
+        # the band count can need a round-trip, so an unknown one is only held
+        # to what the index byte can carry
+        top = (self.spec.bands or 0x100) - 1
+        if not 0 <= index <= top:
+            raise FiioError(f"band index {index} outside 0..{top}")
+        if not 1 <= float(freq) <= 0xFFFF:
+            raise FiioError(f"band frequency {freq} outside 1..65535 Hz")
         lo, hi = self.spec.gain_range
         if not lo <= float(gain) <= hi:
             raise FiioError(f"band gain {gain} outside {lo}..{hi} dB")
+        lo, hi = self.spec.q_range
+        if not lo <= float(q) <= hi:
+            raise FiioError(f"band Q {q} outside {lo}..{hi}")
         self.send(registry.BAND_CMD, proto.enc_band(index, freq, gain, q, filter_type))
+
+    def write_profile(self, preamp, bands, count):
+        """Write a profile's pre-amp and bands, flattening any bands it leaves unused.
+
+        Returns (pre-amp as stored, every band as written), which can differ from
+        what the profile asked for once the device's limits are applied.
+        """
+        # round the pre-amp downward: the device truncates toward zero, and
+        # keeping less attenuation than the profile asked for is what clips
+        stored = self.snap_gain(preamp, safe=True)
+        self.set("eq-gain", stored)
+        written = [{"index": i, "freq": int(round(float(b["freq"]))),
+                    "gain": _clamp(float(b["gain"]), self.spec.gain_range),
+                    "q": _clamp(float(b["q"]), self.spec.q_range), "filter": b["filter"]}
+                   for i, b in enumerate(bands[:count])]
+        written += [{"index": i, "freq": 1000, "gain": 0.0, "q": 0.7, "filter": "peak"}
+                    for i in range(len(written), count)]
+        for b in written:
+            self.set_band(b["index"], b["freq"], b["gain"], b["q"], b["filter"])
+        return stored, written
 
     def scan(self, limit=256, timeout=0.25):
         """Probe the command space read-only; return {cmd: payload}.

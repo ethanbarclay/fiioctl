@@ -4,6 +4,9 @@ The interaction contract under test: arrow to a parameter, press + or - to chang
 it, and the hint line always says what is selected and by how much it will move.
 """
 
+import threading
+import time
+
 import pytest
 
 pytest.importorskip("textual")
@@ -11,9 +14,8 @@ pytest.importorskip("textual")
 from textual.coordinate import Coordinate  # noqa: E402
 from textual.widgets import DataTable, Input, Static  # noqa: E402
 
-from fiioctl import registry  # noqa: E402
-from fiioctl import ui as ui_mod  # noqa: E402
-from fiioctl.device import FiioError  # noqa: E402
+from fiioctl import eqdb, library, registry  # noqa: E402
+from fiioctl.device import Dac, FiioError  # noqa: E402
 from fiioctl.ui import FiioApp  # noqa: E402
 
 FACTORY = [(32, 3.0), (64, 3.0), (125, 2.5), (250, -0.5), (500, -2.5),
@@ -22,6 +24,10 @@ FACTORY = [(32, 3.0), (64, 3.0), (125, 2.5), (250, -0.5), (500, -2.5),
 
 class FakeDac:
     """Stands in for a KA15, recording every write."""
+
+    # the real thing, so these tests cover what the TUI actually sends
+    snap_gain = Dac.snap_gain
+    write_profile = Dac.write_profile
 
     def __init__(self):
         self.spec = registry.KA15
@@ -79,13 +85,15 @@ def dac():
 
 
 class StubEqdb:
-    """Stands in for the eqdb module inside the ui namespace.
+    """Stands in for the eqdb module inside the library namespace.
 
-    Replacing `ui.eqdb` wholesale rather than patching attributes on the real
-    module keeps two hazards away: other test files that call `eqdb.search`
+    Replacing `library.eqdb` wholesale rather than patching attributes on the
+    real module keeps two hazards away: other test files that call `eqdb.search`
     directly are unaffected, and a worker thread that outlives its test cannot
     reach the network once the patch is reverted.
     """
+
+    relevance = staticmethod(eqdb.relevance)
 
     @staticmethod
     def search(query, limit=40):
@@ -104,11 +112,23 @@ class StubEqdb:
         return squash(text)
 
 
+class StubCloud:
+    """Stands in for the cloud module: no FiiO results, and no network."""
+
+    @staticmethod
+    def presets(_device_type, _query="", official=True, community=True):
+        return []
+
+    @staticmethod
+    def find_measurements(_query, limit=25):
+        return []
+
+
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     """Keep the library page from touching the network."""
-    monkeypatch.setattr(ui_mod, "cloud", None)
-    monkeypatch.setattr(ui_mod, "eqdb", StubEqdb)
+    monkeypatch.setattr(library, "cloud", StubCloud)
+    monkeypatch.setattr(library, "eqdb", StubEqdb)
 
 
 async def ready(app, pilot):
@@ -352,6 +372,191 @@ async def test_undo_restores_previous_band_value(dac):
         assert dac.bands[0]["gain"] == 3.0
 
 
+async def test_device_writes_land_in_the_order_they_were_made(dac, monkeypatch):
+    """The earliest write is the slowest, so a race would leave it last."""
+    original = dac.set_band
+    delays = iter([0.15, 0.05])
+
+    def slow(index, freq, gain, q, filter_type=0):
+        time.sleep(next(delays, 0))
+        original(index, freq, gain, q, filter_type)
+
+    monkeypatch.setattr(dac, "set_band", slow)
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        for _ in range(4):
+            await pilot.press("plus")
+        assert await until(app, pilot, lambda: len(dac.writes) == 4)
+        assert [w[3] for w in dac.writes] == [3.5, 4.0, 4.5, 5.0]
+
+
+class TwoBankDac(FakeDac):
+    """A device whose bands and pre-amp really do change with the preset."""
+
+    def __init__(self):
+        super().__init__()
+        self.banks = {}
+
+    def _other_bank(self, preset):
+        return [{**b, "gain": float(preset)} for b in self.bands]
+
+    def set(self, name, value):
+        if name == "eq-preset":
+            self.banks[self.values["eq-preset"]] = (self.bands, self.values["eq-gain"])
+            self.bands, self.values["eq-gain"] = self.banks.get(
+                value, (self._other_bank(value), float(-value)))
+        return super().set(name, value)
+
+
+async def test_plus_on_the_preset_row_loads_that_presets_bands():
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "eq-preset")
+        await pilot.press("plus")
+        assert await until(app, pilot, lambda: app.bands and app.bands[0]["gain"] == 7.0)
+        assert await until(app, pilot, lambda: not app._replacing)
+        assert app.settings["eq-gain"] == -7.0
+        assert not [w for w in dac.writes if w[0] == "band"]
+
+
+async def test_undoing_a_preset_change_reloads_too():
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "eq-preset")
+        await pilot.press("plus")
+        assert await until(app, pilot, lambda: app.bands[0]["gain"] == 7.0)
+        assert await until(app, pilot, lambda: not app._replacing)
+        await pilot.press("u")
+        assert await until(app, pilot, lambda: app.bands[0]["gain"] == 3.0)
+        assert dac.values["eq-preset"] == 6
+
+
+async def test_band_undo_does_not_cross_a_preset_switch():
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        await pilot.press("plus")
+        await ready(app, pilot)
+        app._nudge_to_preset(7)
+        assert await until(app, pilot, lambda: app.bands[0]["gain"] == 7.0)
+        assert await until(app, pilot, lambda: not app._replacing)
+        dac.writes.clear()
+        await pilot.press("u")     # only the preset switch is left to undo
+        assert await until(app, pilot, lambda: dac.values["eq-preset"] == 6)
+        assert not [w for w in dac.writes if w[0] == "band"]
+
+
+PROFILE = {"id": "autoeq:x", "name": "x", "source": "autoeq", "rig": "", "preamp": -6.0,
+           "bands": [{"freq": 200, "gain": -3.0, "q": 1.0, "filter": "peak"}]}
+
+
+def hold(monkeypatch, dac, method):
+    """Make a device call wait, so a job stays in flight until the gate opens."""
+    gate = threading.Event()
+    original = getattr(dac, method)
+
+    def held(*args, **kwargs):
+        gate.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dac, method, held)
+    return gate
+
+
+async def settle(app, pilot, gate):
+    gate.set()
+    assert await until(app, pilot, lambda: not app._replacing)
+    await ready(app, pilot)
+
+
+def band_writes(dac):
+    return [w for w in dac.writes if w[0] == "band"]
+
+
+async def test_band_edit_during_an_apply_does_not_land_behind_it(dac, monkeypatch):
+    """The edit used to reach the device after the profile, but not the screen."""
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        await pilot.press("plus")      # something for undo to find
+        await ready(app, pilot)
+        gate = hold(monkeypatch, dac, "set")
+        app.write_entry(dict(PROFILE))
+        await pilot.press("plus")
+        await pilot.press("u")
+        await settle(app, pilot, gate)
+        assert len(band_writes(dac)) == 1 + 10
+        assert dac.bands[0]["gain"] == app.bands[0]["gain"] == -3.0
+
+
+async def test_gain_edit_during_an_apply_cannot_undo_its_preamp(dac, monkeypatch):
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "eq-gain")
+        gate = hold(monkeypatch, dac, "set")
+        app.write_entry({**PROFILE, "preamp": -3.0})
+        await pilot.press("plus")
+        await settle(app, pilot, gate)
+        assert dac.values["eq-gain"] == app.settings["eq-gain"] == -3.0
+
+
+async def test_edit_during_a_reload_does_not_land_behind_it(dac, monkeypatch):
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_setting(app, pilot, "volume")
+        gate = hold(monkeypatch, dac, "get")
+        app.action_reload()
+        await pilot.press("plus")
+        await settle(app, pilot, gate)
+        assert not [w for w in dac.writes if w[0] == "volume"]
+        assert app.settings["volume"] == 60
+
+
+async def test_band_edit_during_a_preset_switch_is_refused(monkeypatch):
+    dac = TwoBankDac()
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        gate = hold(monkeypatch, dac, "set")
+        app._nudge_to_preset(7)
+        await pilot.press("plus")
+        assert "still loading" in app.sub_title
+        await settle(app, pilot, gate)
+        assert not band_writes(dac)
+
+
+async def test_edits_work_again_after_a_replacing_job_fails(dac, monkeypatch):
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        await select_band(app, pilot, 0, 2)
+        original = dac.set
+
+        def refuse(name, value):
+            raise RuntimeError("firmware said no")
+
+        monkeypatch.setattr(dac, "set", refuse)
+        app.write_entry(dict(PROFILE))
+        assert await until(app, pilot, lambda: "firmware said no" in app.sub_title)
+        assert await until(app, pilot, lambda: not app._replacing)
+        monkeypatch.setattr(dac, "set", original)
+        await pilot.press("plus")
+        await ready(app, pilot)
+        assert ("band", 0, 32, 3.5, 0.71, "peak") in dac.writes
+
+
 # -- slots page ---------------------------------------------------------------
 
 
@@ -445,10 +650,17 @@ async def test_enter_applies_a_profile_to_the_device(dac):
         assert await until(app, pilot,
                            lambda: app.query_one("#results", DataTable).row_count == 1)
         await pilot.press("enter")
-        assert await until(app, pilot, lambda: ("eq-gain", -6.1) in dac.writes)
+        # the KA15 stores whole decibels, and -6.1 must round away from clipping
+        assert await until(app, pilot, lambda: ("eq-gain", -7.0) in dac.writes)
+        assert await until(app, pilot, lambda: app._page() == "page-eq")
         assert dac.bands[0]["freq"] == 105 and dac.bands[0]["filter"] == "low-shelf"
         # the profile had 2 bands; the remaining 8 must be flattened
         assert all(b["gain"] == 0.0 for b in dac.bands[2:])
+        # what is on screen has to be what is now on the device
+        assert app.settings["eq-gain"] == -7.0
+        table = app.query_one("#bands", DataTable)
+        assert table.get_row_at(0)[1] == "105 Hz" and table.get_row_at(0)[4] == "low-shelf"
+        assert table.get_row_at(2)[2] == "+0.0 dB"
 
 
 async def test_reload_never_writes(dac):

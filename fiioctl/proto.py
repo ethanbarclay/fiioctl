@@ -68,8 +68,18 @@ def _dec_version(b):
     return ".".join(str(c) for c in b) or None
 
 
+def parse_bool(v):
+    """Read a user's on/off value, refusing anything that is not clearly one."""
+    word = str(v).strip().lower()
+    if word in ("1", "on", "true", "yes", "y", "enable", "enabled"):
+        return True
+    if word in ("0", "off", "false", "no", "n", "disable", "disabled"):
+        return False
+    raise ValueError(f"expected on or off; got {v!r}")
+
+
 def _enc_bool(v):
-    return bytes([1 if str(v).lower() in ("1", "on", "true", "yes", "enable") else 0])
+    return bytes([1 if parse_bool(v) else 0])
 
 
 #: name -> (encode(value) -> bytes, decode(bytes) -> value). `None` encoder means

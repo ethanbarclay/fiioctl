@@ -94,32 +94,34 @@ def squash(text):
     return re.sub(r"[^a-z0-9]+", "", text.lower())
 
 
+def relevance(query, name):
+    """How well a name matches a query, from 4 (exactly) down to 0 (not at all)."""
+    flat, name = squash(query), squash(name)
+    if not flat or not name:
+        return 0
+    if name == flat:
+        return 4
+    if name.startswith(flat):
+        return 3
+    tokens = [squash(t) for t in query.split() if squash(t)]
+    if tokens and all(t in name for t in tokens):
+        return 2
+    return 1 if flat in name else 0
+
+
 def search(query, entries=None, limit=20):
     """Rank index entries against a free-text query, forgiving punctuation."""
     entries = entries if entries is not None else index()
-    query = query.strip()
-    if not query:
-        return []
-    tokens = [squash(t) for t in re.split(r"\s+", query) if squash(t)]
-    flat = squash(query)
-    if not flat:
+    if not squash(query):
         return []
 
     scored = []
     for e in entries:
-        name = squash(e["name"])
-        if name == flat:
-            score = 4
-        elif name.startswith(flat):
-            score = 3
-        elif tokens and all(t in name for t in tokens):
-            score = 2
-        elif flat in name:
-            score = 1
-        else:
+        score = relevance(query, e["name"])
+        if not score:
             continue
         rank = 0 if e.get("source") in PREFERRED else 1
-        scored.append((-score, rank, len(name), e["name"], e))
+        scored.append((-score, rank, len(squash(e["name"])), e["name"], e))
     scored.sort(key=lambda row: row[:4])
     return [row[4] for row in scored[:limit]]
 

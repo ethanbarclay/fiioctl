@@ -8,12 +8,13 @@ One rule throughout: **arrow to a thing, press + or - to change it.** Nothing is
 committed with a button, and the hint line at the bottom always names what is
 selected and what the step is, so there is nothing to memorise.
 
-Device I/O runs on worker threads behind a lock, because the HID calls block and
-the firmware wants ~100 ms between commands. The UI keeps a local model and
-repaints from that, so editing stays responsive instead of waiting for a
-read-back after every keystroke.
+Device I/O runs on one worker thread, strictly in the order it was asked for,
+because the HID calls block and the firmware wants ~100 ms between commands. The
+UI keeps a local model and repaints from that, so editing stays responsive
+instead of waiting for a read-back after every keystroke.
 """
 
+import collections
 import contextlib
 import functools
 import threading
@@ -36,13 +37,8 @@ from textual.widgets import (
     Static,
 )
 
-from . import curve, eqdb, proto, registry
+from . import curve, library, proto, registry
 from .device import FiioError
-
-try:
-    from . import cloud
-except ImportError:  # pragma: no cover
-    cloud = None
 
 #: nudge per setting. "eq-gain" is special-cased to the device's own resolution
 #: (see Device.gain_step): a 0.5 dB step on hardware that stores whole decibels
@@ -92,6 +88,38 @@ def reporting(fn):
             self.call_from_thread(self._status, str(exc), True)
             return None
     return inner
+
+
+def device_job(fn):
+    """Queue a method for the device thread instead of running it now.
+
+    Giving each edit its own thread left the order to whichever won the lock, so
+    the device could finish on an older value than the one on screen.
+    """
+    @functools.wraps(fn)
+    def queued(self, *args):
+        self._submit(functools.partial(fn, self, *args))
+    return queued
+
+
+def replaces_model(fn):
+    """Queue a device job whose result replaces what the UI has on screen.
+
+    An edit made while one is pending would land behind it on the device but
+    vanish from the screen when its result arrives, so edits wait (see _busy).
+    """
+    @functools.wraps(fn)
+    def queued(self, *args):
+        self._replacing += 1
+
+        def job():
+            try:
+                fn(self, *args)
+            finally:
+                self.call_from_thread(self._replaced)
+
+        self._submit(job)
+    return queued
 
 
 def cycle(options, value, direction):
@@ -158,7 +186,11 @@ class FiioApp(App):
         super().__init__()
         self.dac = dac
         self.spec = dac.spec
-        self._lock = threading.Lock()
+        self._jobs = collections.deque()
+        self._jobs_lock = threading.Lock()
+        self._draining = False
+        #: replaces_model jobs still queued or running
+        self._replacing = 0
         self.settings = {}
         self.bands = []
         self.slot_names = {}
@@ -209,15 +241,44 @@ class FiioApp(App):
 
     # -- plumbing -----------------------------------------------------------
 
-    def _io(self, fn, *args, **kwargs):
-        with self._lock:
-            return fn(*args, **kwargs)
+    def _submit(self, job):
+        """Add a job to the device queue, starting the thread if it has stopped."""
+        with self._jobs_lock:
+            self._jobs.append(job)
+            if self._draining:
+                return
+            self._draining = True
+        self._drain()
+
+    @work(thread=True, group="io")
+    def _drain(self):
+        while True:
+            with self._jobs_lock:
+                if not self._jobs:
+                    self._draining = False
+                    return
+                job = self._jobs.popleft()
+            job()
 
     def _read_bands(self):
-        """(count, bands) straight from the device. Runs on a worker thread."""
-        count = self._io(self.dac.band_count)
-        bands = [b for b in (self._io(self.dac.get_band, i) for i in range(count)) if b]
+        """(count, bands) straight from the device. Runs on the device thread."""
+        count = self.dac.band_count()
+        bands = [b for b in (self.dac.get_band(i) for i in range(count)) if b]
         return count, bands
+
+    def _replaced(self):
+        self._replacing -= 1
+
+    def _busy(self):
+        """Refuse an edit if the model it would change is about to be replaced."""
+        if self._replacing:
+            self._status("still loading from the device")
+        return bool(self._replacing)
+
+    def _forget_eq_undo(self):
+        """Drop undo entries for the EQ just replaced: they would write into the new one."""
+        self.undo_stack = [item for item in self.undo_stack
+                           if item[1][0] == "setting" and item[1][1] != "eq-gain"]
 
     def _status(self, text, error=False):
         fw = self.settings.get("firmware", "?")
@@ -264,7 +325,7 @@ class FiioApp(App):
     def action_reload(self):
         self.reload()
 
-    @work(thread=True, group="io")
+    @replaces_model
     @reporting
     def reload(self):
         values, caps = {}, set(self.spec.caps)
@@ -279,7 +340,7 @@ class FiioApp(App):
             if need and need not in caps:
                 continue
             try:
-                values[name] = self._io(self.dac.get, name, timeout=0.4)
+                values[name] = self.dac.get(name, timeout=0.4)
             except FiioError:
                 continue
         bands, names_by_slot = [], {}
@@ -289,7 +350,7 @@ class FiioApp(App):
             self.call_from_thread(self._status, str(exc), True)
         for slot in self.spec.name_slots:
             try:
-                names_by_slot[slot] = self._io(self.dac.get_preset_name, slot)
+                names_by_slot[slot] = self.dac.get_preset_name(slot)
             except FiioError:
                 continue
         self.call_from_thread(self._adopt, values, bands, names_by_slot)
@@ -298,6 +359,7 @@ class FiioApp(App):
         self.settings = values
         self.bands = bands
         self.slot_names = slot_names
+        self._forget_eq_undo()
         self._status(f"{len(bands)} bands")
         self.repaint()
 
@@ -512,7 +574,7 @@ class FiioApp(App):
     # -- editing ------------------------------------------------------------
 
     def action_nudge(self, direction: int):
-        if self.renaming:
+        if self.renaming or self._busy():
             return
         target = self._target()
         if not target:
@@ -533,8 +595,9 @@ class FiioApp(App):
         # presets and enums both cycle their declared options; the firmware
         # rejects anything outside them
         if name == "eq-preset":
-            new = cycle(sorted(set(self.spec.presets.values())), value, direction)
-        elif cmd.enum:
+            self._nudge_to_preset(cycle(sorted(set(self.spec.presets.values())), value, direction))
+            return
+        if cmd.enum:
             new = cycle(sorted(set(cmd.enum.values())), value, direction)
         elif cmd.codec == "bool":
             new = not value
@@ -581,28 +644,31 @@ class FiioApp(App):
         self.repaint()
         self.push_band(band)
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def push_setting(self, name, value):
-        self._io(self.dac.set, name, value)
+        self.dac.set(name, value)
         self.call_from_thread(self._status, f"{LABELS.get(name, name)} = {value}")
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def push_band(self, band):
-        self._io(self.dac.set_band, band["index"], band["freq"], band["gain"],
-                 band["q"], band["filter"])
+        self.dac.set_band(band["index"], band["freq"], band["gain"], band["q"], band["filter"])
         self.call_from_thread(
             self._status,
             f"band {band['index']}: {band['freq']} Hz {band['gain']:+.1f} dB "
             f"Q {band['q']:.2f} {band['filter']}")
 
     def action_undo(self):
+        if self._busy():
+            return
         if not self.undo_stack:
             self.notify("nothing to undo")
             return
         label, entry = self.undo_stack.pop()
-        if entry[0] == "setting":
+        if entry[0] == "setting" and entry[1] == "eq-preset":
+            self._begin_switch(entry[2])
+        elif entry[0] == "setting":
             _, name, value = entry
             self.settings[name] = value
             self.repaint()
@@ -630,16 +696,21 @@ class FiioApp(App):
         if previous == value:
             return
         self.undo_stack.append(("preset", ("setting", "eq-preset", previous)))
+        self._begin_switch(value)
+
+    def _begin_switch(self, value):
+        self._forget_eq_undo()
         self.settings["eq-preset"] = value
         self.repaint()
-        self.push_setting("eq-preset", value)
-        self.load_bands_after_switch()
+        self.switch_preset(value)
 
-    @work(thread=True, group="io")
+    @replaces_model
     @reporting
-    def load_bands_after_switch(self):
+    def switch_preset(self, value):
+        # one job, so nothing can be queued between the write and the read
+        self.dac.set("eq-preset", value)
         bands = self._read_bands()[1]
-        gain = self._io(self.dac.get, "eq-gain")
+        gain = self.dac.get("eq-gain")
         self.call_from_thread(self._after_switch, bands, gain)
 
     def _after_switch(self, bands, gain):
@@ -665,10 +736,10 @@ class FiioApp(App):
             return
         self.save_to(slot)
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def save_to(self, slot):
-        self._io(self.dac.set, "eq-save", slot)
+        self.dac.set("eq-save", slot)
         self.call_from_thread(self._status, f"saved current EQ to slot {slot}")
 
     def action_rename(self):
@@ -685,10 +756,10 @@ class FiioApp(App):
         box.focus()
         self._refresh_hint()
 
-    @work(thread=True, group="io")
+    @device_job
     @reporting
     def push_name(self, slot, text):
-        clean = self._io(self.dac.set_preset_name, slot, text)
+        clean = self.dac.set_preset_name(slot, text)
         self.call_from_thread(self._after_rename, slot, clean)
 
     def _after_rename(self, slot, clean):
@@ -728,51 +799,8 @@ class FiioApp(App):
     @work(thread=True, group="net")
     @reporting
     def run_search(self, query):
-        """Search all three sources: FiiO presets, FiiO measurements, AutoEq."""
-        found, problems = [], []
-        if cloud is not None and self.spec.cloud_id:
-            try:
-                found.extend(cloud.presets(self.spec.cloud_id, query))
-            except Exception as exc:  # noqa: BLE001 - a catalogue failure is non-fatal
-                problems.append(str(exc))
-        if cloud is not None:
-            try:
-                for row in cloud.find_measurements(query, limit=25):
-                    variant = f" ({row['config']})" if row.get("config") else ""
-                    found.append({"name": f"{row['productName']}{variant}",
-                                  "source": "fiio-autoeq",
-                                  "rig": row.get("source") or "",
-                                  "bands": None, "meas_id": row["id"]})
-            except Exception as exc:  # noqa: BLE001
-                problems.append(str(exc))
-        try:
-            for e in eqdb.search(query, limit=25):
-                found.append({"name": e["name"], "source": "autoeq",
-                              "rig": e.get("source", ""), "bands": None, "entry": e})
-        except OSError as exc:
-            problems.append(f"AutoEq unreachable: {exc}")
+        found, problems = library.search(query, self.spec.cloud_id)
         self.call_from_thread(self._show_results, found, problems)
-
-    def _resolve(self, entry, count):
-        """Fill in an entry's bands and preamp. Runs on a worker: may hit the network."""
-        if entry.get("bands") is not None:
-            return entry
-        if entry.get("meas_id") is not None:
-            if cloud is None:
-                raise FiioError("the FiiO catalogue needs: pip install 'fiioctl[cloud]'")
-            prof = cloud.auto_eq(entry["meas_id"], bands=count)
-            entry.update(bands=prof["bands"], preamp=prof["preamp"],
-                         description=prof["description"])
-        else:
-            prof = eqdb.profile(entry["entry"])
-            entry.update(bands=prof["bands"], preamp=prof["preamp"])
-        return entry
-
-    @staticmethod
-    def _key(entry):
-        if entry.get("meas_id") is not None:
-            return ("m", entry["meas_id"])
-        return ("a", entry["entry"]["path"])
 
     def _show_results(self, found, problems):
         self.results = found
@@ -801,7 +829,7 @@ class FiioApp(App):
             return
         bands = entry.get("bands")
         if bands is None:
-            cached = self.previews.get(self._key(entry))
+            cached = self.previews.get(entry["id"])
             if cached:
                 bands, entry["bands"] = cached["bands"], cached["bands"]
                 entry.setdefault("preamp", cached["preamp"])
@@ -817,39 +845,35 @@ class FiioApp(App):
     @work(thread=True, group="net")
     @reporting
     def fetch_preview(self, entry):
-        self._resolve(entry, len(self.bands) or 10)
+        library.resolve(entry, len(self.bands) or 10)
         self.call_from_thread(self._adopt_preview, entry)
 
     def _adopt_preview(self, entry):
-        self.previews[self._key(entry)] = {"bands": entry["bands"],
-                                           "preamp": entry.get("preamp", 0.0)}
+        self.previews[entry["id"]] = {"bands": entry["bands"],
+                                      "preamp": entry.get("preamp", 0.0)}
         if self._selected_result() is entry:
             self._show_preview()
 
-    @work(thread=True, group="io")
+    @work(thread=True, group="net")
     @reporting
     def apply_profile(self, entry):
-        count = self._io(self.dac.band_count)
-        self._resolve(entry, count)
-        lo, hi = self.spec.gain_range
-        preamp = max(lo, min(hi, float(entry.get("preamp") or 0.0)))
-        self._io(self.dac.set, "eq-gain", preamp)
-        chosen = entry["bands"][:count]
-        for i, b in enumerate(chosen):
-            self._io(self.dac.set_band, i, b["freq"], max(lo, min(hi, b["gain"])),
-                     b["q"], b["filter"])
-        for i in range(len(chosen), count):
-            self._io(self.dac.set_band, i, 1000, 0.0, 0.7, "peak")
-        self.call_from_thread(self._after_apply, entry, chosen, preamp, count)
+        # resolved off the device thread: a slow network must not hold up edits
+        library.resolve(entry, len(self.bands) or 10)
+        self.call_from_thread(self.write_entry, entry)
 
-    def _after_apply(self, entry, chosen, preamp, count):
+    @replaces_model
+    @reporting
+    def write_entry(self, entry):
+        count = self.dac.band_count()
+        preamp, written = self.dac.write_profile(entry.get("preamp") or 0.0, entry["bands"], count)
+        self.call_from_thread(self._after_apply, entry, written, preamp, count)
+
+    def _after_apply(self, entry, written, preamp, count):
         self.settings["eq-gain"] = preamp
-        self.bands = [{"index": i, "freq": int(b["freq"]), "gain": float(b["gain"]),
-                       "q": float(b["q"]), "filter": b["filter"]}
-                      for i, b in enumerate(chosen)]
-        self.bands += [{"index": i, "freq": 1000, "gain": 0.0, "q": 0.7, "filter": "peak"}
-                       for i in range(len(chosen), count)]
-        dropped = len(entry["bands"]) - len(chosen)
+        self.bands = written
+        self._forget_eq_undo()
+        dropped = max(0, len(entry["bands"]) - count)
+        self.repaint()
         self.action_page("eq")
         self._status(f"applied '{entry['name']}'"
                      + (f" ({dropped} band(s) dropped, device has {count})" if dropped else "")
