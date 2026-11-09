@@ -22,6 +22,10 @@ def _wired(handle, spec=registry.KA15):
     return Dac(handle, {"product_string": spec.name}, spec)
 
 
+def _dry(spec=registry.KA15):
+    return Dac(None, {"product_string": spec.name}, spec, dry=True)
+
+
 # -- write failures -----------------------------------------------------------
 
 
@@ -46,3 +50,47 @@ def test_write_that_fails_at_every_length_raises():
     handle = FakeHandle(rejects=(64, 65, 33, 10))
     with pytest.raises(FiioError, match="write failed"):
         _wired(handle).send(2, b"\x01")
+
+
+# -- value validation ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [-1, 256, 300])
+def test_u8_with_no_declared_range_does_not_wrap(bad):
+    with pytest.raises(FiioError, match="outside 0..255"):
+        _dry().set("volume", bad)
+
+
+def test_u8_limits_are_inclusive():
+    assert _dry().set("volume", 0) == 0
+    assert _dry().set("volume", 255) == 255
+
+
+@pytest.mark.parametrize("bad", ["inf", "nan"])
+def test_non_finite_is_rejected_cleanly(bad):
+    with pytest.raises(FiioError, match="whole number"):
+        _dry().set("volume", bad)
+
+
+@pytest.mark.parametrize("kwargs, message", [
+    ({"freq": 70000}, "frequency"),
+    ({"freq": 0}, "frequency"),
+    ({"freq": float("nan")}, "frequency"),
+    ({"gain": 13}, "gain"),
+    ({"q": 21}, "Q"),
+    ({"q": 0.0}, "Q"),
+    ({"index": -1}, "index"),
+    ({"index": 256}, "index"),
+    ({"index": 1.5}, "index"),
+])
+def test_band_fields_are_range_checked(kwargs, message):
+    args = {"index": 0, "freq": 1000, "gain": 0.0, "q": 0.7, **kwargs}
+    with pytest.raises(FiioError, match=message):
+        _dry().set_band(args["index"], args["freq"], args["gain"], args["q"])
+
+
+def test_band_index_respects_a_declared_band_count():
+    ja11 = registry.DEVICES["JADEAUDIO JA11"]
+    _dry(ja11).set_band(4, 1000, 0.0, 0.7)
+    with pytest.raises(FiioError, match="outside 0..4"):
+        _dry(ja11).set_band(5, 1000, 0.0, 0.7)

@@ -26,6 +26,11 @@ class FiioError(RuntimeError):
 #: inside the encoder and raise a bare ValueError, or silently truncate.
 INTEGER_CODECS = ("u8", "u16", "balance")
 
+#: what an integer codec can carry. The encoders mask to the field width, so
+#: without this a command with no declared range would wrap: volume -1 goes out
+#: as 0xFF, the loudest value there is.
+CODEC_LIMITS = {"u8": (0, 0xFF), "u16": (0, 0xFFFF)}
+
 
 def _integral(name, value):
     """Require a whole number, so bad input fails as a FiioError not a traceback."""
@@ -33,7 +38,7 @@ def _integral(name, value):
         number = float(value)
     except (TypeError, ValueError):
         raise FiioError(f"{name} must be a whole number; got {value!r}") from None
-    if number != int(number):
+    if not math.isfinite(number) or number != int(number):
         raise FiioError(f"{name} must be a whole number; got {value!r}")
     return int(number)
 
@@ -284,8 +289,9 @@ class Dac:
         if cmd.codec in INTEGER_CODECS:
             value = _integral(name, value)
 
-        if cmd.rng is not None and cmd.codec != "bool":
-            lo, hi = cmd.rng
+        limits = cmd.rng if cmd.rng is not None else CODEC_LIMITS.get(cmd.codec)
+        if limits is not None:
+            lo, hi = limits
             if not lo <= float(value) <= hi:
                 raise FiioError(f"{name}={value} outside {lo}..{hi}")
         return value
@@ -331,9 +337,20 @@ class Dac:
         return proto.dec_band(self.request(registry.BAND_CMD, bytes([index])))
 
     def set_band(self, index, freq, gain, q, filter_type=0):
+        index = _integral("band index", index)
+        # the band count can need a round-trip, so an unknown one is only held
+        # to what the index byte can carry
+        top = (self.spec.bands or 0x100) - 1
+        if not 0 <= index <= top:
+            raise FiioError(f"band index {index} outside 0..{top}")
+        if not 1 <= float(freq) <= 0xFFFF:
+            raise FiioError(f"band frequency {freq} outside 1..65535 Hz")
         lo, hi = self.spec.gain_range
         if not lo <= float(gain) <= hi:
             raise FiioError(f"band gain {gain} outside {lo}..{hi} dB")
+        lo, hi = self.spec.q_range
+        if not lo <= float(q) <= hi:
+            raise FiioError(f"band Q {q} outside {lo}..{hi}")
         self.send(registry.BAND_CMD, proto.enc_band(index, freq, gain, q, filter_type))
 
     def scan(self, limit=256, timeout=0.25):
