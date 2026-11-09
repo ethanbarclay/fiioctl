@@ -59,6 +59,22 @@ def test_abort_carries_its_own_exit_code(monkeypatch, capsys):
     assert "pick a slot first" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("argv", [
+    ["info", "--json"],
+    ["state", "--json"],
+    ["--json", "info"],
+    ["eq", "search", "hd650", "--json"],
+    ["peq", "show", "--json"],
+    ["autoeq", "search", "--json", "hd650"],
+])
+def test_json_is_accepted_either_side_of_the_subcommand(argv):
+    assert cli.build_parser().parse_args(argv).json is True
+
+
+def test_json_stays_off_unless_asked_for():
+    assert cli.build_parser().parse_args(["info"]).json is False
+
+
 def test_abort_reports_as_json_too(monkeypatch, capsys):
     import json
 

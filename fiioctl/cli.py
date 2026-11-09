@@ -680,6 +680,19 @@ def _group_help(parser):
     return show
 
 
+class SubParser(argparse.ArgumentParser):
+    """A subcommand parser that also takes --json, as the docs say every one does.
+
+    The default is suppressed so a subcommand that was not given the flag leaves
+    alone a --json already seen before it.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                          help="emit JSON")
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="fiioctl", description="Control FiiO USB DACs over HID.",
@@ -693,7 +706,7 @@ def build_parser():
                    help="build and show packets without writing to the device")
     p.add_argument("--force", action="store_true",
                    help="talk to a model whose transport is unsupported anyway")
-    sub = p.add_subparsers(dest="cmd", metavar="COMMAND")
+    sub = p.add_subparsers(dest="cmd", metavar="COMMAND", parser_class=SubParser)
     p.set_defaults(fn=_group_help(p))
 
     sub.add_parser("devices", help="list connected FiiO HID interfaces"
