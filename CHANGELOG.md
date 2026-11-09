@@ -4,6 +4,29 @@ Notable changes per release. Versions follow [semantic versioning](https://semve
 with the caveat that a 0.x line can break its CLI surface between minor versions
 if a protocol finding demands it.
 
+## Unreleased
+
+### Changed
+
+- `--trace` and `--dry-run` packet logs go to stderr rather than stdout.
+
+### Fixed
+
+- Failed HID writes are detected, so the write-length fallback runs and a dead
+  device raises an error instead of reporting success.
+- Values a setting cannot hold are refused rather than wrapped onto the wire:
+  `set volume -1` was sent as 0xFF. The same goes for a band's index, frequency
+  and Q.
+- Unrecognised on/off values are refused rather than turning the setting off.
+- Only the listed products of the rebadged controller vendors are treated as
+  FiiO devices, in device selection and in the udev rules.
+- The TUI rounds a profile's pre-amp downward like the CLI, shows the new EQ
+  after applying it, and reloads bands whenever the preset changes.
+- TUI device writes happen strictly in the order they were made.
+- `autoeq` picks the recommended target for the measurement's rig as well as its
+  source and form factor.
+- `--json` is accepted after the subcommand as well as before it.
+
 ## 0.1.0 - 2026-11-08
 
 First release. Everything below was reverse-engineered from the FiiO Control web
