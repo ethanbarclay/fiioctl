@@ -43,6 +43,11 @@ def _integral(name, value):
     return int(number)
 
 
+def _clamp(value, limits):
+    lo, hi = limits
+    return max(lo, min(hi, value))
+
+
 def _hid():
     if hid is None:
         raise FiioError("the 'hid' package is not installed: pip install hid")
@@ -361,6 +366,26 @@ class Dac:
         if not lo <= float(q) <= hi:
             raise FiioError(f"band Q {q} outside {lo}..{hi}")
         self.send(registry.BAND_CMD, proto.enc_band(index, freq, gain, q, filter_type))
+
+    def write_profile(self, preamp, bands, count):
+        """Write a profile's pre-amp and bands, flattening any bands it leaves unused.
+
+        Returns (pre-amp as stored, every band as written), which can differ from
+        what the profile asked for once the device's limits are applied.
+        """
+        # round the pre-amp downward: the device truncates toward zero, and
+        # keeping less attenuation than the profile asked for is what clips
+        stored = self.snap_gain(preamp, safe=True)
+        self.set("eq-gain", stored)
+        written = [{"index": i, "freq": int(round(float(b["freq"]))),
+                    "gain": _clamp(float(b["gain"]), self.spec.gain_range),
+                    "q": _clamp(float(b["q"]), self.spec.q_range), "filter": b["filter"]}
+                   for i, b in enumerate(bands[:count])]
+        written += [{"index": i, "freq": 1000, "gain": 0.0, "q": 0.7, "filter": "peak"}
+                    for i in range(len(written), count)]
+        for b in written:
+            self.set_band(b["index"], b["freq"], b["gain"], b["q"], b["filter"])
+        return stored, written
 
     def scan(self, limit=256, timeout=0.25):
         """Probe the command space read-only; return {cmd: payload}.

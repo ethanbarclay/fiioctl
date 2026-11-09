@@ -13,7 +13,7 @@ from textual.widgets import DataTable, Input, Static  # noqa: E402
 
 from fiioctl import registry  # noqa: E402
 from fiioctl import ui as ui_mod  # noqa: E402
-from fiioctl.device import FiioError  # noqa: E402
+from fiioctl.device import Dac, FiioError  # noqa: E402
 from fiioctl.ui import FiioApp  # noqa: E402
 
 FACTORY = [(32, 3.0), (64, 3.0), (125, 2.5), (250, -0.5), (500, -2.5),
@@ -22,6 +22,10 @@ FACTORY = [(32, 3.0), (64, 3.0), (125, 2.5), (250, -0.5), (500, -2.5),
 
 class FakeDac:
     """Stands in for a KA15, recording every write."""
+
+    # the real thing, so these tests cover what the TUI actually sends
+    snap_gain = Dac.snap_gain
+    write_profile = Dac.write_profile
 
     def __init__(self):
         self.spec = registry.KA15
@@ -445,10 +449,13 @@ async def test_enter_applies_a_profile_to_the_device(dac):
         assert await until(app, pilot,
                            lambda: app.query_one("#results", DataTable).row_count == 1)
         await pilot.press("enter")
-        assert await until(app, pilot, lambda: ("eq-gain", -6.1) in dac.writes)
+        # the KA15 stores whole decibels, and -6.1 must round away from clipping
+        assert await until(app, pilot, lambda: ("eq-gain", -7.0) in dac.writes)
+        assert await until(app, pilot, lambda: app._page() == "page-eq")
         assert dac.bands[0]["freq"] == 105 and dac.bands[0]["filter"] == "low-shelf"
         # the profile had 2 bands; the remaining 8 must be flattened
         assert all(b["gain"] == 0.0 for b in dac.bands[2:])
+        assert app.settings["eq-gain"] == -7.0
 
 
 async def test_reload_never_writes(dac):

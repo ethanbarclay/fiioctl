@@ -255,15 +255,7 @@ def _apply_profile(dac, prof, args):
     if args.slot is not None:
         slot = dac.spec.presets.get(str(args.slot).lower(), args.slot)
         dac.set("eq-preset", int(slot))
-    lo, hi = dac.spec.gain_range
-    # round the pre-amp downward: the device truncates toward zero, and keeping
-    # less attenuation than the profile asked for is what clips
-    preamp = dac.snap_gain(prof["preamp"], safe=True)
-    dac.set("eq-gain", preamp)
-    for i, b in enumerate(bands):
-        dac.set_band(i, b["freq"], max(lo, min(hi, b["gain"])), b["q"], b["filter"])
-    for i in range(len(bands), count):
-        dac.set_band(i, 1000, 0.0, 0.7, "peak")  # flatten unused bands
+    preamp, _ = dac.write_profile(prof["preamp"], bands, count)
     if args.save:
         dac.set("eq-save", dac.get("eq-preset") if args.slot is None else int(slot))
     return {

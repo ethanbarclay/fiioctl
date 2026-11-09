@@ -831,25 +831,14 @@ class FiioApp(App):
     def apply_profile(self, entry):
         count = self._io(self.dac.band_count)
         self._resolve(entry, count)
-        lo, hi = self.spec.gain_range
-        preamp = max(lo, min(hi, float(entry.get("preamp") or 0.0)))
-        self._io(self.dac.set, "eq-gain", preamp)
-        chosen = entry["bands"][:count]
-        for i, b in enumerate(chosen):
-            self._io(self.dac.set_band, i, b["freq"], max(lo, min(hi, b["gain"])),
-                     b["q"], b["filter"])
-        for i in range(len(chosen), count):
-            self._io(self.dac.set_band, i, 1000, 0.0, 0.7, "peak")
-        self.call_from_thread(self._after_apply, entry, chosen, preamp, count)
+        preamp, written = self._io(self.dac.write_profile, entry.get("preamp") or 0.0,
+                                   entry["bands"], count)
+        self.call_from_thread(self._after_apply, entry, written, preamp, count)
 
-    def _after_apply(self, entry, chosen, preamp, count):
+    def _after_apply(self, entry, written, preamp, count):
         self.settings["eq-gain"] = preamp
-        self.bands = [{"index": i, "freq": int(b["freq"]), "gain": float(b["gain"]),
-                       "q": float(b["q"]), "filter": b["filter"]}
-                      for i, b in enumerate(chosen)]
-        self.bands += [{"index": i, "freq": 1000, "gain": 0.0, "q": 0.7, "filter": "peak"}
-                       for i in range(len(chosen), count)]
-        dropped = len(entry["bands"]) - len(chosen)
+        self.bands = written
+        dropped = max(0, len(entry["bands"]) - count)
         self.action_page("eq")
         self._status(f"applied '{entry['name']}'"
                      + (f" ({dropped} band(s) dropped, device has {count})" if dropped else "")
