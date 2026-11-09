@@ -186,11 +186,11 @@ def test_write_profile_reports_what_the_wire_can_carry():
 # -- opening ------------------------------------------------------------------
 
 
-def _unopenable(monkeypatch, name):
+def _unopenable(monkeypatch, name, path=b"p"):
     def refuse(_path):
         raise OSError("open failed")
 
-    info = {"vendor_id": 0x2972, "product_id": 0x0104, "product_string": name, "path": b"p"}
+    info = {"vendor_id": 0x2972, "product_id": 0x0104, "product_string": name, "path": path}
     monkeypatch.setattr(device, "hid", SimpleNamespace(
         enumerate=lambda: [info], device=lambda: SimpleNamespace(open_path=refuse)))
 
@@ -204,6 +204,20 @@ def test_an_unnamed_device_that_will_not_open_says_what_was_found(monkeypatch):
 def test_a_named_device_that_will_not_open_is_named(monkeypatch):
     _unopenable(monkeypatch, "FIIO KA15")
     with pytest.raises(FiioError, match="cannot open 'FIIO KA15'"):
+        Dac.open()
+
+
+def test_a_hidraw_node_without_access_points_at_the_udev_rule(monkeypatch):
+    _unopenable(monkeypatch, "FIIO KA15", b"/dev/hidraw6")
+    monkeypatch.setattr(device.os, "access", lambda *_: False)
+    with pytest.raises(FiioError, match="no access to /dev/hidraw6.*udev rule"):
+        Dac.open()
+
+
+def test_a_hidraw_node_with_access_is_described_as_busy(monkeypatch):
+    _unopenable(monkeypatch, "FIIO KA15", b"/dev/hidraw6")
+    monkeypatch.setattr(device.os, "access", lambda *_: True)
+    with pytest.raises(FiioError, match="Another program may be using it"):
         Dac.open()
 
 

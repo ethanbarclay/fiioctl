@@ -9,6 +9,7 @@ and correlating a reply with the command that asked for it.
 import contextlib
 import importlib
 import math
+import os
 import sys
 import time
 
@@ -69,6 +70,15 @@ def _unnamed_error(info, detail=""):
         "this usually means the udev rule is not installed (see README); on macOS "
         "re-plug the device."
     )
+
+
+def _open_hint(path):
+    """What to try when a device will not open; a hidraw path can say which it is."""
+    if path.startswith(b"/dev/") and not os.access(path, os.R_OK | os.W_OK):
+        return (f"Your user has no access to {path.decode()}: install the udev rule "
+                "(see README) and re-plug the device.")
+    return ("Another program may be using it. On Linux, check the udev rule is "
+            "installed (see README); on macOS re-plug the device.")
 
 
 def _hid():
@@ -172,7 +182,7 @@ class Dac:
                 raise _unnamed_error(info, f" or open it: {exc}") from exc
             raise FiioError(
                 f"cannot open {info.get('product_string')!r}: {exc}. "
-                "On Linux install the udev rule (see README); on macOS re-plug the device."
+                + _open_hint(info["path"])
             ) from exc
         handle.set_nonblocking(False)
         return cls(handle, info, spec, trace, dry)
