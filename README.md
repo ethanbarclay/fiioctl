@@ -307,23 +307,26 @@ Be aware of what has and has not been checked:
   per-device tables rather than observed. `fiioctl info` reports
   `verified_on_hardware` so you know which you are relying on.
 
-### Devices it cannot drive
+### Devices it does not drive yet
 
-FiiO's own app uses three different transports, and this project implements one
-of them, the shared HID command set. Two groups are therefore out of reach, and
-`fiioctl` says so rather than failing obscurely:
+FiiO's own app drives devices three ways, and this project implements the shared
+HID command set. Two groups are therefore refused, and `fiioctl` says so rather
+than failing obscurely:
 
 | | Devices |
 |---|---|
-| different protocol (adapter) | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming |
+| adapter controller, untested | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming |
 | USB CDC serial, not HID | K15 (confirmed); K17/K19 possibly |
 
 ```console
 $ fiioctl info
-error: FIIO BTR15: the official app drives this model through a different
-       protocol, which fiioctl does not implement. See docs/PROTOCOL.md.
+error: FIIO BTR15: FiiO's app handles this model through its own controller,
+       and fiioctl has not been tested on it. See docs/PROTOCOL.md.
        Pass --force to talk to it anyway as if it were an HID device.
 ```
+
+The adapter models appear to use the same HID commands as everything else, so
+they are waiting on testing and some per-model work rather than a new protocol.
 
 Everything else the app supports uses the same command numbers, so volume, EQ,
 presets, filter and balance should work; see

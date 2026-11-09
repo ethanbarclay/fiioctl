@@ -62,7 +62,7 @@ devices are listed, everything else (including the **KA15**) uses `7`:
 | USB20 | 0 |
 | *everything else* | **7** |
 
-## Three transports, only one implemented
+## Three ways the app drives a device
 
 The official app does not drive every device the same way, which bounds how far
 this project reaches.
@@ -70,18 +70,38 @@ this project reaches.
 | Transport | Devices | Here |
 |---|---|---|
 | **Shared HID command set** | KA15, KA17, JA11, BTR13, BTR17, K13 R2R, K17, K19, QX13, FP3, Melody, JIEZI, RETRO NANO … | implemented |
-| **Adapter protocol** (`R4e` in the bundle) | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming | not implemented |
+| **Adapter controller** (`R4e` and `GM` in the bundle) | KG13, BTR15, JadeAudio Trustblu, FG3, JK13, SNOWSKY GAMDONG, JD1 Gaming | same HID commands; untested, so refused |
 | **USB CDC serial** (`initPortCtrl`, `connectType: SERIAL`) | K15 confirmed; K17/K19 are special-cased and may be too | not implemented |
 
-The app's adapter factory returns a bespoke controller for those seven models and
+The app's adapter factory returns a controller for those seven models and
 `undefined` for everything else, and "everything else" is what falls through to
 the shared command set documented below. For the K15 the app throws *"Port
 controller is undefined"* without a serial connection, so it is not an HID device
 at all.
 
-`registry.Device.transport` records this, and `fiioctl` refuses to open a model
-it cannot speak to rather than sending frames into the void. `--force` overrides
-that for experimentation.
+Despite the name, the adapter is a code path in the app and not a different wire
+protocol. Its controller (`GM`) builds frames with the same function, headers,
+command ids and value encodings as the shared set below, and report id 7 applies
+as it does to most models. Five models use it unchanged. Two wrap it: the KG13
+(`I4e`) listens for the device announcing a preset change on cmd 22 and skips some
+preset writes, and the BTR15 (`L4e`) waits a second after a preset write, treats
+the EQ switch as always on, and resets its bands one at a time.
+
+What an implementation would have to handle, from the bundle's `index-WZB3nC8k.js`:
+
+- **Preset values can be longer than one byte.** The FG3 and JD1 Gaming use 13,
+  160-162, 257-260 and 513. Cmd 22 carries them big-endian at whatever length they
+  need, and the reply states its length. `fiioctl` treats `eq-preset` as one byte.
+- **Per-model tables differ.** The FG3 has six filter types with no all-pass, and
+  mic, output and mic-monitor controls.
+- **Commands 53 and 54** are read and written as 3D gain and reverb level.
+
+This comes from reading the bundle only. No adapter model has been tried, so none
+can be called supported yet.
+
+`registry.Device.transport` records all this. `fiioctl` refuses a serial model,
+which it cannot speak to, and an adapter model, which nobody has tested. `--force`
+overrides that for experimentation.
 
 One caveat on the HID row: **only the KA15 has been confirmed on hardware**
 (`Device.verified`). The others are listed because the app's own tables give

@@ -104,8 +104,8 @@ class Dac:
 
     #: why a model cannot be driven, keyed by its declared transport
     UNSUPPORTED = {
-        "adapter": ("the official app drives this model through a different "
-                    "protocol, which fiioctl does not implement"),
+        "adapter": ("FiiO's app handles this model through its own controller, "
+                    "and fiioctl has not been tested on it"),
         "serial": ("this model is driven over USB CDC serial rather than HID, "
                    "and fiioctl has no serial transport"),
     }

@@ -16,6 +16,9 @@ if a protocol finding demands it.
   Community presets always rank last, and `--limit` caps the merged list,
   defaulting to 50.
 - `autoeq search` output uses a plain hyphen rather than an em dash.
+- The refusal for the seven adapter models no longer says they use a different
+  protocol. FiiO's app sends them the same HID commands; they are refused because
+  nobody has tested one.
 
 ### Fixed
 

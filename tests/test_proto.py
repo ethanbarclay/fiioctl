@@ -278,7 +278,7 @@ def test_filter_range_admits_zero():
 
 
 def test_adapter_devices_are_marked_unsupported():
-    """These seven are driven by a different protocol in the official app."""
+    """These seven go through their own controller in the official app."""
     for key in registry.ADAPTER_DEVICES:
         assert registry.DEVICES[key].transport == "adapter", key
 
@@ -340,7 +340,7 @@ def test_open_refuses_a_device_whose_transport_is_not_implemented(monkeypatch):
             "usage_page": 0x000C}
     monkeypatch.setattr(device_mod, "candidates", lambda: [fake])
 
-    with pytest.raises(FiioError, match="different protocol"):
+    with pytest.raises(FiioError, match="has not been tested"):
         Dac.open()
 
 
@@ -355,7 +355,7 @@ def test_force_gets_past_the_transport_gate(monkeypatch):
 
     with pytest.raises(FiioError) as caught:
         Dac.open(force=True)
-    assert "different protocol" not in str(caught.value)
+    assert "has not been tested" not in str(caught.value)
 
 
 def test_registry_loose_product_match():
