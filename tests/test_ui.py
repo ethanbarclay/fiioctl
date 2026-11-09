@@ -66,6 +66,7 @@ class FakeDac:
         self.bands[index] = {"index": index, "freq": int(freq), "gain": float(gain),
                              "q": float(q), "filter": filter_type}
         self.writes.append(("band", index, int(freq), float(gain), float(q), filter_type))
+        return dict(self.bands[index])
 
     def get_preset_name(self, slot):
         return self.names.get(slot, "")

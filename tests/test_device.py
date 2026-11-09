@@ -242,3 +242,16 @@ def test_slot_is_resolved_like_any_other_preset(capsys):
     assert "aa 0a" not in "".join(capsys.readouterr())
     cli._apply_profile(_dry(), prof, SimpleNamespace(slot="USER2", save=False))
     assert "aa 0a 00 00 16 01 08" in "".join(capsys.readouterr())
+
+
+def test_a_band_and_a_profile_round_a_value_the_same_way():
+    direct = _dry().set_band(0, 100, 0.15, 1.0, "peak")
+    _, written = _dry().write_profile(-3.0, [{"freq": 100, "gain": 0.15, "q": 1.0,
+                                              "filter": "peak"}], 1)
+    assert direct["gain"] == written[0]["gain"] == 0.2
+
+
+def test_write_profile_flattens_the_bands_it_does_not_use():
+    _, written = _dry().write_profile(-3.0, [], 2)
+    assert [(b["index"], b["freq"], b["gain"], b["q"]) for b in written] == [
+        (0, 1000, 0.0, 0.7), (1, 1000, 0.0, 0.7)]

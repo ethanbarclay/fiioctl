@@ -412,7 +412,10 @@ class Dac:
         lo, hi = self.spec.q_range
         if not lo <= float(q) <= hi:
             raise FiioError(f"band Q {q} outside {lo}..{hi}")
-        self.send(registry.BAND_CMD, proto.enc_band(index, freq, gain, q, filter_type))
+        payload = proto.enc_band(index, freq, gain, q, filter_type)
+        self.send(registry.BAND_CMD, payload)
+        # as it went over the wire, not as it was typed
+        return proto.dec_band(payload)
 
     def write_profile(self, preamp, bands, count):
         """Write a profile's pre-amp and bands, flattening any bands it leaves unused.
@@ -424,16 +427,10 @@ class Dac:
         # keeping less attenuation than the profile asked for is what clips
         stored = self.snap_gain(preamp, safe=True)
         self.set("eq-gain", stored)
-        written = [{"index": i, "freq": int(round(float(b["freq"]))),
-                    # rounded to what the wire carries, so this is what was written
-                    "gain": round(_clamp(float(b["gain"]), self.spec.gain_range), 1),
-                    "q": round(_clamp(float(b["q"]), self.spec.q_range), 2),
-                    "filter": b["filter"]}
-                   for i, b in enumerate(bands[:count])]
-        written += [{"index": i, "freq": 1000, "gain": 0.0, "q": 0.7, "filter": "peak"}
-                    for i in range(len(written), count)]
-        for b in written:
-            self.set_band(b["index"], b["freq"], b["gain"], b["q"], b["filter"])
+        chosen = [(b["freq"], _clamp(float(b["gain"]), self.spec.gain_range),
+                   _clamp(float(b["q"]), self.spec.q_range), b["filter"]) for b in bands[:count]]
+        chosen += [(1000, 0.0, 0.7, "peak")] * (count - len(chosen))
+        written = [self.set_band(i, *band) for i, band in enumerate(chosen)]
         return stored, written
 
     def scan(self, limit=256, timeout=0.25):

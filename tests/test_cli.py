@@ -133,6 +133,19 @@ def test_an_infinite_gain_is_refused_not_a_traceback(monkeypatch, capsys):
     assert "finite" in capsys.readouterr().out
 
 
+def test_peq_set_reports_what_was_sent(monkeypatch, capsys):
+    import json
+
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    argv = ["--dry-run", "peq", "set", "0", "--freq", "100", "--gain", "2.7524", "--q", "0.5779",
+            "--json"]
+    assert cli.main(argv) == cli.EXIT_OK
+    out = json.loads(capsys.readouterr().out)
+    assert (out["gain"], out["q"], out["written"]) == (2.8, 0.58, True)
+
+
 def test_abort_reports_as_json_too(monkeypatch, capsys):
     import json
 

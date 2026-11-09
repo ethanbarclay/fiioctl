@@ -239,11 +239,10 @@ def cmd_peq_show(args):
 
 def cmd_peq_set(args):
     with connect(args) as dac:
-        dac.set_band(args.band, args.freq, args.gain, args.q, args.filter)
-        freq = int(round(args.freq))
-        emit({"index": args.band, "freq": freq, "gain": args.gain, "q": args.q,
-              "filter": args.filter, "written": True}, args.json,
-             f"band {args.band}: {freq} Hz {args.gain:+} dB Q {args.q} {args.filter}")
+        band = dac.set_band(args.band, args.freq, args.gain, args.q, args.filter)
+        emit({**band, "written": True}, args.json,
+             f"band {band['index']}: {band['freq']} Hz {band['gain']:+} dB "
+             f"Q {band['q']} {band['filter']}")
     return EXIT_OK
 
 
