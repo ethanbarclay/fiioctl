@@ -1,8 +1,10 @@
 """Device layer: write failures, input validation, device selection. No hardware."""
 
+from types import SimpleNamespace
+
 import pytest
 
-from fiioctl import registry
+from fiioctl import device, registry
 from fiioctl.device import Dac, FiioError
 
 
@@ -119,3 +121,30 @@ def test_bool_refuses_anything_else(word, capsys):
     with pytest.raises(FiioError, match="mic-switch: expected on or off"):
         _dry().set("mic-switch", word)
     assert "TX" not in "".join(capsys.readouterr())
+
+
+# -- device selection ---------------------------------------------------------
+
+
+def _enumerating(monkeypatch, *ids):
+    infos = [{"vendor_id": v, "product_id": p, "usage_page": 0xFF00} for v, p in ids]
+    monkeypatch.setattr(device, "hid", SimpleNamespace(enumerate=lambda: infos))
+
+
+def test_any_product_from_fiio_itself_is_a_candidate(monkeypatch):
+    _enumerating(monkeypatch, (0x2972, 0x0104), (0x2972, 0x9999))
+    assert len(device.candidates()) == 2
+
+
+@pytest.mark.parametrize("ids", [(0x3302, 15296), (0x3302, 15298), (0x0A12, 16391),
+                                 (0x0666, 2184), (0x31B2, 65528)])
+def test_rebadged_controllers_match_on_their_listed_product(monkeypatch, ids):
+    _enumerating(monkeypatch, ids)
+    assert len(device.candidates()) == 1
+
+
+@pytest.mark.parametrize("ids", [(0x3302, 15299), (0x0A12, 1), (0x0666, 1), (0x31B2, 1),
+                                 (0x1234, 16391)])
+def test_other_products_from_those_vendors_are_ignored(monkeypatch, ids):
+    _enumerating(monkeypatch, ids)
+    assert device.candidates() == []

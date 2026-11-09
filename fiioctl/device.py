@@ -53,7 +53,10 @@ def candidates():
     """All HID interfaces that could be a FiiO control endpoint."""
     out = []
     for info in _hid().enumerate():
-        if info.get("vendor_id") in registry.VENDORS:
+        # only 0x2972 is FiiO's own; the others are controller vendors whose
+        # unrelated products must not be mistaken for a DAC
+        products = registry.VENDORS.get(info.get("vendor_id"), ())
+        if products is None or info.get("product_id") in products:
             out.append(info)
     return out
 
