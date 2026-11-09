@@ -679,6 +679,8 @@ def cmd_batch(args):
                 continue
             try:
                 req = json.loads(line)
+                if not isinstance(req, dict):
+                    raise ValueError("expected a JSON object")
                 op = req.get("op", "get")
                 if op == "get":
                     res = {"ok": True, "value": dac.get(req["name"])}

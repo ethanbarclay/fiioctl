@@ -96,6 +96,18 @@ def test_out_of_range_volume_is_refused_before_anything_is_sent(monkeypatch, cap
     assert "outside 0..255" in captured.out and "TX" not in captured.err
 
 
+def test_batch_reports_a_line_that_is_not_an_object(monkeypatch, capsys):
+    import io
+    import json
+
+    monkeypatch.setattr(cli, "connect", _no_device)
+    monkeypatch.setattr("sys.stdin", io.StringIO('[1, 2]\n{"op": "nope"}\n'))
+    assert cli.main(["batch"]) == cli.EXIT_OK
+    first, second = (json.loads(line) for line in capsys.readouterr().out.splitlines())
+    assert first["ok"] is False and "JSON object" in first["error"]
+    assert second["ok"] is False and "unknown op" in second["error"]
+
+
 def test_abort_reports_as_json_too(monkeypatch, capsys):
     import json
 
