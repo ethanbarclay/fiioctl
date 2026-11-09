@@ -28,8 +28,7 @@ $ fiioctl scan
 $ fiioctl peq show
 ```
 
-None of these change anything on the device. In 0.1.0, `--json` has to come
-before the subcommand, whatever the report form says.
+None of these change anything on the device.
 
 ### 2. Reversible writes, if you are up for it
 

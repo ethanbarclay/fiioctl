@@ -4,7 +4,11 @@ Notable changes per release. Versions follow [semantic versioning](https://semve
 with the caveat that a 0.x line can break its CLI surface between minor versions
 if a protocol finding demands it.
 
-## Unreleased
+## 0.2.0 - 2026-11-08
+
+Failed writes are now noticed, values a setting cannot hold are refused, the TUI
+talks to the device strictly in order, and `eq search` covers every profile
+source. Some CLI output changes, listed below, can break scripts.
 
 ### Changed
 
@@ -44,6 +48,20 @@ if a protocol finding demands it.
 - `autoeq` picks the recommended target for the measurement's rig as well as its
   source and form factor.
 - `--json` is accepted after the subcommand as well as before it.
+
+### Verified on hardware
+
+A FiiO KA15 on firmware 1.1.6, through both the CLI and the TUI: writes with
+read-back, preset switches, edits landing in order, undo, and applying an official
+preset, an AutoEq result and a FiiO measurement. It found that the TUI was showing
+a profile's unrounded values, that Q drifts by up to about 0.02 when written, and
+that unsaved band edits survive a preset switch.
+
+### Not verified
+
+Saving to a user slot, the error for a device with no readable name, and a failed
+write falling through to the next length. No model other than the KA15 has been
+tried, including the adapter models.
 
 ## 0.1.0 - 2026-11-08
 
