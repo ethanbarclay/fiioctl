@@ -286,6 +286,12 @@ class Dac:
         if name == "eq-gain":
             return self.snap_gain(value)
 
+        if cmd.codec == "bool":
+            try:
+                return proto.parse_bool(value)
+            except ValueError as exc:
+                raise FiioError(f"{name}: {exc}") from None
+
         if cmd.codec in INTEGER_CODECS:
             value = _integral(name, value)
 

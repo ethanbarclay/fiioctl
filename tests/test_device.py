@@ -26,6 +26,12 @@ def _dry(spec=registry.KA15):
     return Dac(None, {"product_string": spec.name}, spec, dry=True)
 
 
+def _wire_value(capsys):
+    """The value byte of the single frame a dry run just printed."""
+    out, err = capsys.readouterr()
+    return bytes.fromhex((out + err).split("TX ")[1])[7]
+
+
 # -- write failures -----------------------------------------------------------
 
 
@@ -94,3 +100,22 @@ def test_band_index_respects_a_declared_band_count():
     _dry(ja11).set_band(4, 1000, 0.0, 0.7)
     with pytest.raises(FiioError, match="outside 0..4"):
         _dry(ja11).set_band(5, 1000, 0.0, 0.7)
+
+
+@pytest.mark.parametrize("word", ["enabled", "on", "1", "Yes", "y", True])
+def test_bool_accepts_on_words(word, capsys):
+    assert _dry().set("mic-switch", word) is True
+    assert _wire_value(capsys) == 1
+
+
+@pytest.mark.parametrize("word", ["disabled", "off", "0", "No", "n", False])
+def test_bool_accepts_off_words(word, capsys):
+    assert _dry().set("mic-switch", word) is False
+    assert _wire_value(capsys) == 0
+
+
+@pytest.mark.parametrize("word", ["enbaled", "2", "maybe", ""])
+def test_bool_refuses_anything_else(word, capsys):
+    with pytest.raises(FiioError, match="mic-switch: expected on or off"):
+        _dry().set("mic-switch", word)
+    assert "TX" not in "".join(capsys.readouterr())
