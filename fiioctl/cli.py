@@ -568,7 +568,7 @@ def cmd_autoeq_search(args):
         for row in rows:
             variant = f"  [{row['config']}]" if row.get("config") else ""
             print(f"{row['id']:>6}  {row['productName']}{variant}"
-                  f"  —  {row.get('source') or '?'}")
+                  f"  -  {row.get('source') or '?'}")
     return EXIT_OK
 
 
