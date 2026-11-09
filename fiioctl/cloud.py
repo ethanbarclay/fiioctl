@@ -263,11 +263,14 @@ def recommended_target(measurement, targets_by_label=None, compat=None):
     labels = targets_by_label or {t["label"]: t["id"] for t in target_list()}
     source = (measurement.get("source") or "").lower()
     form = (measurement.get("formFactor") or "").lower()
+    rig = (measurement.get("rig") or "").lower()
 
     def matches(entries):
         for entry in entries or []:
+            # an entry naming no rig covers every rig that source measures on
             if (entry.get("source") or "").lower() == source and \
-                    (entry.get("form") or "").lower() == form:
+                    (entry.get("form") or "").lower() == form and \
+                    (entry.get("rig") or "").lower() in ("", rig):
                 return True
         return False
 

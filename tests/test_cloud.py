@@ -151,6 +151,33 @@ def test_recommended_target_falls_back_by_form_factor():
     assert cloud.recommended_target(meas, LABELS, COMPAT) == (5, "Harman in-ear 2019")
 
 
+RIG_LABELS = {"EARS curve": 1, "Harman over-ear 2018": 6}
+RIG_COMPAT = [
+    {"label": "EARS curve", "recommended": [
+        {"source": "crinacle", "form": "over-ear", "rig": "EARS + 711"}]},
+    {"label": "Harman over-ear 2018", "recommended": [
+        {"source": "crinacle", "form": "over-ear", "rig": "GRAS 43AG-7"}]},
+]
+
+
+@pytest.mark.parametrize("rig, expected", [("GRAS 43AG-7", 6), ("EARS + 711", 1)])
+def test_recommended_target_tells_rigs_of_one_source_apart(rig, expected):
+    meas = {"source": "crinacle", "formFactor": "over-ear", "rig": rig}
+    assert cloud.recommended_target(meas, RIG_LABELS, RIG_COMPAT)[0] == expected
+
+
+def test_recommended_target_entry_naming_a_rig_needs_that_rig():
+    meas = {"source": "crinacle", "formFactor": "in-ear", "rig": "GRAS RA0045"}
+    compat = [{"label": "AutoEq in-ear",
+               "recommended": [{"source": "crinacle", "form": "in-ear", "rig": "711"}]}]
+    assert cloud.recommended_target(meas, LABELS, compat) == (5, "Harman in-ear 2019")
+
+
+def test_recommended_target_entry_without_a_rig_covers_any_rig():
+    meas = {"source": "oratory1990", "formFactor": "over-ear", "rig": "GRAS 43AC"}
+    assert cloud.recommended_target(meas, LABELS, COMPAT) == (6, "Harman over-ear 2018")
+
+
 def test_ten_bands_maps_to_eight_peaking_plus_two_shelves():
     """8_PEAKING_WITH_SHELVES yields exactly 10 filters, which most models expose."""
     assert cloud.EQ_CONFIGS[10] == "8_PEAKING_WITH_SHELVES"
