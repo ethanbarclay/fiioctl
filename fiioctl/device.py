@@ -37,7 +37,7 @@ def _integral(name, value):
     """Require a whole number, so bad input fails as a FiioError not a traceback."""
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise FiioError(f"{name} must be a whole number; got {value!r}") from None
     if not math.isfinite(number) or number != int(number):
         raise FiioError(f"{name} must be a whole number; got {value!r}")
@@ -247,6 +247,8 @@ class Dac:
         """
         step = self.spec.gain_step or 0.1
         value = float(value)
+        if not math.isfinite(value):
+            raise FiioError(f"gain must be a finite number; got {value}")
         snapped = math.floor(value / step) * step if safe else round(value / step) * step
         lo, hi = self.spec.gain_range
         return round(max(lo, min(hi, snapped)), 1)
@@ -279,7 +281,7 @@ class Dac:
                 return cmd.enum[str(value)]
             try:
                 number = int(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 number = None
             if number is None or number not in cmd.enum.values():
                 options = ", ".join(f"{text} ({num})"
@@ -295,7 +297,7 @@ class Dac:
                 return self.spec.presets[value.strip().lower()]
             try:
                 number = int(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 valid = ", ".join(sorted(self.spec.presets))
                 raise FiioError(f"eq-preset {value!r} is not a number or a preset "
                                 f"name; names: {valid}") from None

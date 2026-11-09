@@ -74,8 +74,8 @@ def data_errors():
     try:
         from .cloud import CloudError
     except ImportError:
-        return (ValueError, TypeError)
-    return (CloudError, ValueError, TypeError)
+        return (ValueError, TypeError, OverflowError)
+    return (CloudError, ValueError, TypeError, OverflowError)
 
 
 def connect(args):
@@ -698,7 +698,7 @@ def cmd_batch(args):
                     res = {"ok": True, "value": payload.hex(" ")}
                 else:
                     res = {"ok": False, "error": f"unknown op {op!r}"}
-            except (FiioError, KeyError, ValueError, TypeError) as exc:
+            except (FiioError, KeyError, ValueError, TypeError, OverflowError) as exc:
                 res = {"ok": False, "error": str(exc)}
             json.dump({**res, "request": line}, sys.stdout)
             sys.stdout.write("\n")

@@ -108,6 +108,31 @@ def test_batch_reports_a_line_that_is_not_an_object(monkeypatch, capsys):
     assert second["ok"] is False and "unknown op" in second["error"]
 
 
+def test_batch_survives_values_too_large_to_convert(monkeypatch, capsys):
+    import io
+    import json
+
+    from fiioctl import device
+
+    huge = "1" + "0" * 400
+    lines = [f'{{"op": "set", "name": "{name}", "value": {value}}}'
+             for name, value in (("eq-gain", "1e999"), ("eq-preset", "1e999"), ("volume", huge),
+                                 ("volume", "30"))]
+    monkeypatch.setattr(device, "candidates", list)
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(lines) + "\n"))
+    assert cli.main(["--dry-run", "batch"]) == cli.EXIT_OK
+    results = [json.loads(line)["ok"] for line in capsys.readouterr().out.splitlines()]
+    assert results == [False, False, False, True]
+
+
+def test_an_infinite_gain_is_refused_not_a_traceback(monkeypatch, capsys):
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    assert cli.main(["--dry-run", "set", "eq-gain", "inf"]) == cli.EXIT_DEVICE
+    assert "finite" in capsys.readouterr().out
+
+
 def test_abort_reports_as_json_too(monkeypatch, capsys):
     import json
 
