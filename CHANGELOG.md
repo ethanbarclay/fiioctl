@@ -4,7 +4,10 @@ Notable changes per release. Versions follow [semantic versioning](https://semve
 with the caveat that a 0.x line can break its CLI surface between minor versions
 if a protocol finding demands it.
 
-## Unreleased
+## 0.2.1 - 2026-11-08
+
+Linux fixes, found by running on Linux for the first time. If you installed
+`99-fiio.rules`, replace it with `70-fiio.rules` as the README describes.
 
 ### Fixed
 
@@ -19,6 +22,19 @@ if a protocol finding demands it.
   reply as its own or send a write too soon after another's.
 - A device that will not open is no longer always blamed on the udev rule. On Linux
   the error says whether the device has gone or the user has no access to it.
+
+### Verified on hardware
+
+A FiiO KA15 on firmware 1.1.6, on CachyOS: the rule tested as `99-` and `70-` and
+installed through a real re-plug, every read and reversible write, all three
+`eq apply` sources, the TUI, HID commands during an audio stream, and programs
+overlapping on the same device. No model other than the KA15 has been tried on
+Linux.
+
+### Not verified
+
+A model with several HID interfaces on hidraw, saving to a user slot, the fallback
+to libusb, and a failed write falling through to the next length.
 
 ## 0.2.0 - 2026-11-08
 
