@@ -75,6 +75,27 @@ def test_json_stays_off_unless_asked_for():
     assert cli.build_parser().parse_args(["info"]).json is False
 
 
+def test_packet_log_does_not_corrupt_json(monkeypatch, capsys):
+    import json
+
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    assert cli.main(["--dry-run", "set", "volume", "30", "--json"]) == cli.EXIT_OK
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["volume"] == 30
+    assert captured.err.startswith("TX ")
+
+
+def test_out_of_range_volume_is_refused_before_anything_is_sent(monkeypatch, capsys):
+    from fiioctl import device
+
+    monkeypatch.setattr(device, "candidates", list)
+    assert cli.main(["--dry-run", "set", "volume", "-1"]) == cli.EXIT_DEVICE
+    captured = capsys.readouterr()
+    assert "outside 0..255" in captured.out and "TX" not in captured.err
+
+
 def test_abort_reports_as_json_too(monkeypatch, capsys):
     import json
 

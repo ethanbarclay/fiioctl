@@ -8,6 +8,7 @@ and correlating a reply with the command that asked for it.
 
 import contextlib
 import math
+import sys
 import time
 
 from . import proto, registry
@@ -161,6 +162,11 @@ class Dac:
 
     # -- raw I/O ------------------------------------------------------------
 
+    @staticmethod
+    def _log(direction, data):
+        # stderr, so a packet log cannot corrupt the JSON on stdout
+        print(f"{direction} {data.hex(' ')}", file=sys.stderr)
+
     def _pace(self):
         wait = self.spec.interval - (time.monotonic() - self._last)
         if wait > 0:
@@ -169,7 +175,7 @@ class Dac:
     def _write(self, packet):
         buf = bytes([self.spec.report_id]) + packet
         if self.dry:
-            print(f"TX {buf.hex(' ')}")
+            self._log("TX", buf)
             return
         self._pace()
         lens = (self._wlen,) if self._wlen else self.WRITE_LENS
@@ -188,7 +194,7 @@ class Dac:
             self._wlen = n
             self._last = time.monotonic()
             if self.trace:
-                print(f"TX {out.hex(' ')}")
+                self._log("TX", out)
             return
         raise FiioError(f"write failed: {last}")
 
@@ -213,7 +219,7 @@ class Dac:
             if not report:
                 continue
             if self.trace:
-                print(f"RX {bytes(report).hex(' ')}")
+                self._log("RX", bytes(report))
             parsed = proto.parse(report)
             if parsed and parsed[0] == cmd:
                 return parsed[1]

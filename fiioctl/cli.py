@@ -699,7 +699,7 @@ def build_parser():
         epilog="Run 'fiioctl schema' for a machine-readable description of every command.")
     p.add_argument("--version", action="version", version=f"fiioctl {__version__}")
     p.add_argument("--json", action="store_true", help="emit JSON")
-    p.add_argument("--trace", action="store_true", help="log every HID packet to stdout")
+    p.add_argument("--trace", action="store_true", help="log every HID packet to stderr")
     p.add_argument("--serial", help="select device by USB serial number")
     p.add_argument("--product", help="select device by product-string substring")
     p.add_argument("--dry-run", action="store_true",
