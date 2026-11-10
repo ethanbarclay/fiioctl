@@ -21,14 +21,38 @@ on the device while a timestamped read loop watched the command space.
 
 ### Fixed
 
-- A write to a command name this model does not use is refused instead of
-  landing on the wrong setting. On a KA15, command 8 is the headset mic rather
-  than the app's `volume-switch`, so `fiioctl set volume-switch 1` silently
-  disabled the microphone; it now says which name this model uses for that
-  command. The ids are not renamed globally, because the app's names are right
-  for other models.
+- A write to a command name another model owns is refused instead of landing on
+  the wrong setting. On a KA15, command 8 is the headset mic rather than the
+  app's `volume-switch`, so `fiioctl set volume-switch 1` silently disabled the
+  microphone; the same applied in reverse to `mic` on any other model. Both
+  directions now say which name fiioctl holds for the connected model. That
+  wording is deliberate: only the KA15's names were measured, and every other
+  model's come from FiiO's bundle, which the KA15 showed is not a safe guide to
+  a particular device. The ids are not renamed globally either, because the
+  bundle's names are the right default for models nobody has tested.
+
+  A command whose capability a model simply never declared is still writable.
+  Capability data is thin for everything but the KA15, so refusing on it would
+  block `filter`, `balance` and `brightness` on a dozen models that plausibly
+  have them.
 - `fiioctl scan` labels a command with the name the connected model uses, not
-  whichever name was declared last for that id.
+  whichever name was declared last for that id. Models that use neither name
+  keep the shared command set's own, so a JA11 scan no longer reports settings
+  only a KA15 has.
+- A write that could not be confirmed says so instead of reporting success. A
+  re-enumerating device is indistinguishable from an unplugged cable or a
+  permission error, so `set` reports the value with `verified: false` rather
+  than presenting a guess as a confirmed write, and models that never declared
+  the capability get an ordinary failure.
+- The terminal UI leaves out settings whose write re-enumerates the device.
+  There is no reconnect there, so nudging one dropped the handle and left every
+  later read failing until the app was restarted, with undo doing it again.
+- Changing the volume scale in the terminal UI re-reads the volume range with
+  it. The range it rescales was left stale, and the clamp then allowed a raw
+  step worth roughly twice the gain.
+- `vol-mode` is bounded to the values a KA15 accepts. It is the one setting
+  that changes what another command means, so an out-of-range value left the
+  volume scale in a state neither the tool nor the docs could describe.
 - Writing `uac-mode` no longer reports a failure for a write that landed. The
   device leaves the USB bus to re-enumerate, which makes `hid_write` return -1,
   so these writes are reported as applied and never verified.

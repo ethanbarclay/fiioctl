@@ -534,3 +534,11 @@ def test_a_write_that_goes_through_is_not_flagged():
     assert dac.unverified is False
 
 
+# -- bounds on the setting that redefines another ----------------------------
+
+
+def test_vol_mode_is_bounded():
+    """It changes what cmds 1 and 2 mean, so an undescribable value is worse
+    here than elsewhere."""
+    with pytest.raises(FiioError, match="outside 0..1"):
+        _dry().set("vol-mode", 200)

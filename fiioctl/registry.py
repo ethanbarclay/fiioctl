@@ -77,7 +77,10 @@ COMMANDS = {
                     help="Screen blanking timeout; 2 is '1 min' on a KA15"),
     "dac-mode": Cmd(5, "u8", enum={"class-ab": 0, "class-h": 1},
                     help="DAC output stage mode"),
-    "vol-mode": Cmd(12, "u8",
+    # bounded because it is the one setting that changes what another
+    # command means: an out-of-range value would leave the volume scale in a
+    # state neither this tool nor the docs can describe. A KA15 accepts 0 and 1.
+    "vol-mode": Cmd(12, "u8", rng=(0, 1),
                     help="Volume scale; changes what volume and volume-max mean"),
     "key-mode": Cmd(13, "u8", mode="r",
                     help="Physical key mapping; the device sets it, writes are refused"),
