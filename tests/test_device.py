@@ -423,3 +423,18 @@ def test_a_re_enumerating_write_is_never_verified():
     assert dac.set("uac-mode", "uac2", verify=True) == 1
 
 
+# -- scan annotation ---------------------------------------------------------
+
+
+def test_scan_labels_follow_the_model():
+    """Two names share cmd 8; the one the model uses must win the label."""
+    assert cli.known_command_names(registry.KA15)[8] == "mic"
+    assert cli.known_command_names(registry.KA15)[16] == "rotation"
+
+
+def test_scan_labels_without_a_device_keep_the_bundle_names():
+    """`mic` and `rotation` are KA15 readings of ids the bundle names
+    otherwise, so with no model in hand the shared name is the honest one."""
+    plain = cli.known_command_names()
+    assert plain[8] == "volume-switch"
+    assert plain[16] == "screen"

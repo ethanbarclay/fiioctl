@@ -384,9 +384,19 @@ def cmd_peq_clear(args):
     return EXIT_OK
 
 
-def known_command_names():
-    """cmd id -> the name fiioctl knows it by, for annotating a scan."""
-    names = {cmd.id: name for name, cmd in registry.COMMANDS.items()}
+def known_command_names(spec=None):
+    """cmd id -> the name fiioctl knows it by, for annotating a scan.
+
+    Two names can share an id (`screen` and `rotation` are both command 16),
+    so with a device in hand prefer the name that model actually uses.
+    """
+    names = {}
+    for name, cmd in registry.COMMANDS.items():
+        if cmd.id in names and (spec is None or name in spec.unsupported):
+            # Two names share this id. Keep the one this model uses, or the
+            # bundle's own name when there is no model to ask.
+            continue
+        names[cmd.id] = name
     names[registry.BAND_CMD] = "peq-band"
     names[registry.NAME_CMD] = "preset-name"
     return names
@@ -453,10 +463,10 @@ def _report_scan(args, found, names, product):
 
 
 def cmd_scan(args):
-    names = known_command_names()
     if args.diff and not os.path.exists(args.diff):
         raise Abort(EXIT_USAGE, f"no such snapshot: {args.diff}")
     with connect(args) as dac:
+        names = known_command_names(dac.spec)
         found = dac.scan(limit=args.max, timeout=args.timeout)
         product = dac.info.get("product_string")
 
