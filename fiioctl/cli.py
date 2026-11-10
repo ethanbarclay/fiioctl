@@ -138,13 +138,11 @@ def cmd_info(args):
 
 def cmd_state(args):
     with connect(args) as dac:
-        caps = set(dac.spec.caps)
         out = {}
         for name, cmd in registry.COMMANDS.items():
             if not cmd.readable:
                 continue
-            need = registry.CAPS.get(name)
-            if not args.all and (name in dac.spec.unsupported or (need and need not in caps)):
+            if not args.all and not registry.supported(dac.spec, name):
                 continue
             try:
                 # short timeout: an unsupported command simply never answers

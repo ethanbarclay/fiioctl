@@ -375,7 +375,7 @@ def test_a_write_to_a_name_this_model_does_not_use_is_refused():
 
 def test_the_refusal_names_the_command_this_model_does_use():
     dac = _wired(FakeHandle())
-    with pytest.raises(FiioError, match="calls command 8 'mic'"):
+    with pytest.raises(FiioError, match="knows command 8 as 'mic'"):
         dac.set("volume-switch", True)
 
 
@@ -438,3 +438,51 @@ def test_scan_labels_without_a_device_keep_the_bundle_names():
     plain = cli.known_command_names()
     assert plain[8] == "volume-switch"
     assert plain[16] == "screen"
+
+
+# -- the same hazard from the other side -------------------------------------
+
+
+def test_a_name_another_model_owns_is_refused_on_this_one():
+    """`mic` is the KA15's name for command 8. On a JA11 that id is the
+    line-out switch, so writing `mic` there would move the wrong setting."""
+    handle = FakeHandle()
+    ja11 = registry.DEVICES["JADEAUDIO JA11"]
+    with pytest.raises(FiioError, match="knows command 8 as 'volume-switch'"):
+        _wired(handle, ja11).set("mic", "off")
+    assert handle.sent == [], "nothing should have gone to the device"
+
+
+def test_a_command_the_model_merely_never_declared_is_still_writable():
+    """Deliberate, and the reason the refusal is not based on capabilities.
+
+    Capability data is thin for every model but the KA15: most profiles
+    declare only what the app bundle revealed. Refusing on a missing
+    capability would block filter, balance, brightness and language on a dozen
+    models that plausibly have them, turning "we do not know" into "no". Only
+    an id another name owns on this model is refused.
+    """
+    ja11 = registry.DEVICES["JADEAUDIO JA11"]
+    assert not registry.supported(ja11, "dac-mode")  # nothing claims it either
+    handle = FakeHandle()
+    _wired(handle, ja11).set("dac-mode", "class-h")
+    assert handle.sent, "an unclaimed id should still be writable"
+
+
+def test_brightness_survives_on_a_model_with_no_screen_capability():
+    """The regression the capability-based version of this guard would cause."""
+    ja11 = registry.DEVICES["JADEAUDIO JA11"]
+    assert not registry.supported(ja11, "brightness")
+    handle = FakeHandle()
+    _wired(handle, ja11).set("brightness", 5)
+    assert handle.sent
+
+
+def test_supported_answers_for_both_models():
+    ka15, ja11 = registry.KA15, registry.DEVICES["JADEAUDIO JA11"]
+    assert registry.supported(ka15, "mic") and not registry.supported(ka15, "volume-switch")
+    assert registry.supported(ja11, "volume-switch") and not registry.supported(ja11, "mic")
+    # a command with no capability requirement applies everywhere
+    assert registry.supported(ja11, "eq-preset") and registry.supported(ka15, "eq-preset")
+
+

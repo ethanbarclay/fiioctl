@@ -112,8 +112,22 @@ CAPS = {
 }
 
 
+def supported(spec, name):
+    """Is this name one this model uses?
+
+    Capability data is thin for every model but the KA15 - most profiles
+    declare only what the app bundle revealed - so this answers "known to
+    apply", not "known to be absent". Callers must not read a False here as
+    permission to refuse on its own.
+    """
+    if name in spec.unsupported:
+        return False
+    need = CAPS.get(name)
+    return need is None or need in spec.caps
+
+
 def alternative(spec, name):
-    """Another name for the same command id that *is* supported on this model.
+    """Another name for the same command id that *is* used by this model.
 
     Two models can use one command id for different things, so the name a user
     reached for may be the wrong one for the device in front of them rather
@@ -124,10 +138,7 @@ def alternative(spec, name):
     if cmd is None:
         return None
     for other, candidate in COMMANDS.items():
-        if other == name or candidate.id != cmd.id or other in spec.unsupported:
-            continue
-        need = CAPS.get(other)
-        if need is None or need in spec.caps:
+        if other != name and candidate.id == cmd.id and supported(spec, other):
             return other
     return None
 
