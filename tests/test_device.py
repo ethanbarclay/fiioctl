@@ -356,3 +356,189 @@ def test_write_profile_flattens_the_bands_it_does_not_use():
     _, written = _dry().write_profile(-3.0, [], 2)
     assert [(b["index"], b["freq"], b["gain"], b["q"]) for b in written] == [
         (0, 1000, 0.0, 0.7), (1, 1000, 0.0, 0.7)]
+
+
+# -- one command id, two meanings --------------------------------------------
+
+
+def test_a_write_to_a_name_this_model_does_not_use_is_refused():
+    """The KA15's command 8 is its headset mic, not a line-out switch.
+
+    Allowing the write would silently disable someone's microphone, which is
+    worse than an unknown command: the inherited name invites it.
+    """
+    handle = FakeHandle()
+    with pytest.raises(FiioError, match="not supported on FIIO KA15"):
+        _wired(handle).set("volume-switch", True)
+    assert handle.sent == [], "nothing should have gone to the device"
+
+
+def test_the_refusal_names_the_command_this_model_does_use():
+    dac = _wired(FakeHandle())
+    with pytest.raises(FiioError, match="knows command 8 as 'mic'"):
+        dac.set("volume-switch", True)
+
+
+def test_a_model_that_does_use_the_generic_name_still_writes_it():
+    """The fix must stay device-scoped: JA11 has no mic and keeps cmd 8."""
+    handle = FakeHandle()
+    dac = _wired(handle, registry.DEVICES["JADEAUDIO JA11"])
+    dac.set("volume-switch", True)
+    assert handle.sent, "the write should have gone out"
+
+
+def test_alternative_is_derived_from_the_ids_not_a_second_table():
+    assert registry.alternative(registry.KA15, "volume-switch") == "mic"
+    assert registry.alternative(registry.KA15, "screen") == "rotation"
+    assert registry.alternative(registry.KA15, "volume") is None
+
+
+# -- writes that take the device off the bus ---------------------------------
+
+
+def test_a_re_enumerating_write_is_not_reported_as_a_failure():
+    """Writing uac-mode makes the KA15 re-enumerate, so hid_write can report
+    -1 for a write that landed. Reporting that as an error sent people chasing
+    a failure that had in fact applied."""
+    handle = FakeHandle(rejects=(64, 65, 33, 10))  # every length fails
+    assert registry.COMMANDS["uac-mode"].id in registry.RESETS_LINK
+    assert _wired(handle).set("uac-mode", "uac1") == 0
+
+
+def test_an_ordinary_write_still_raises_when_it_fails():
+    handle = FakeHandle(rejects=(64, 65, 33, 10))
+    with pytest.raises(FiioError, match="write failed"):
+        _wired(handle).set("volume", 30)
+
+
+def test_a_re_enumerating_write_is_never_verified():
+    """Nothing can be read back on a handle the device just dropped."""
+    handle = FakeHandle()
+    dac = _wired(handle)
+
+    def refuse(*a, **k):
+        raise AssertionError("set() must not read back after re-enumeration")
+
+    dac.get = refuse
+    assert dac.set("uac-mode", "uac2", verify=True) == 1
+
+
+# -- scan annotation ---------------------------------------------------------
+
+
+def test_scan_labels_follow_the_model():
+    """Two names share cmd 8; the one the model uses must win the label."""
+    assert cli.known_command_names(registry.KA15)[8] == "mic"
+    assert cli.known_command_names(registry.KA15)[16] == "rotation"
+
+
+def test_scan_labels_without_a_device_keep_the_bundle_names():
+    """`mic` and `rotation` are KA15 readings of ids the bundle names
+    otherwise, so with no model in hand the shared name is the honest one."""
+    plain = cli.known_command_names()
+    assert plain[8] == "volume-switch"
+    assert plain[16] == "screen"
+
+
+# -- the same hazard from the other side -------------------------------------
+
+
+def test_a_name_another_model_owns_is_refused_on_this_one():
+    """`mic` is the KA15's name for command 8. On a JA11 that id is the
+    line-out switch, so writing `mic` there would move the wrong setting."""
+    handle = FakeHandle()
+    ja11 = registry.DEVICES["JADEAUDIO JA11"]
+    with pytest.raises(FiioError, match="knows command 8 as 'volume-switch'"):
+        _wired(handle, ja11).set("mic", "off")
+    assert handle.sent == [], "nothing should have gone to the device"
+
+
+def test_a_command_the_model_merely_never_declared_is_still_writable():
+    """Deliberate, and the reason the refusal is not based on capabilities.
+
+    Capability data is thin for every model but the KA15: most profiles
+    declare only what the app bundle revealed. Refusing on a missing
+    capability would block filter, balance, brightness and language on a dozen
+    models that plausibly have them, turning "we do not know" into "no". Only
+    an id another name owns on this model is refused.
+    """
+    ja11 = registry.DEVICES["JADEAUDIO JA11"]
+    assert not registry.supported(ja11, "dac-mode")  # nothing claims it either
+    handle = FakeHandle()
+    _wired(handle, ja11).set("dac-mode", "class-h")
+    assert handle.sent, "an unclaimed id should still be writable"
+
+
+def test_brightness_survives_on_a_model_with_no_screen_capability():
+    """The regression the capability-based version of this guard would cause."""
+    ja11 = registry.DEVICES["JADEAUDIO JA11"]
+    assert not registry.supported(ja11, "brightness")
+    handle = FakeHandle()
+    _wired(handle, ja11).set("brightness", 5)
+    assert handle.sent
+
+
+def test_supported_answers_for_both_models():
+    ka15, ja11 = registry.KA15, registry.DEVICES["JADEAUDIO JA11"]
+    assert registry.supported(ka15, "mic") and not registry.supported(ka15, "volume-switch")
+    assert registry.supported(ja11, "volume-switch") and not registry.supported(ja11, "mic")
+    # a command with no capability requirement applies everywhere
+    assert registry.supported(ja11, "eq-preset") and registry.supported(ka15, "eq-preset")
+
+
+# -- one id, two names: the parts a KA15-only test would miss ----------------
+
+
+def test_scan_labels_keep_the_shared_name_on_models_that_never_claimed_it():
+    """The inverse of the KA15 case, and the one a KA15-only test misses.
+
+    `mic` and `rotation` are absent from every other profile's `unsupported`
+    tuple, so deciding on that alone let the later entry win the label and a
+    JA11 scan printed settings that model has never been shown to have.
+    """
+    for key in ("JADEAUDIO JA11", "FIIO KA17", "FIIO BTR13"):
+        names = cli.known_command_names(registry.DEVICES[key])
+        assert names[8] == "volume-switch", key
+        assert names[16] == "screen", key
+    for spec in (registry.DEFAULT, None):
+        names = cli.known_command_names(spec)
+        assert names[8] == "volume-switch"
+        assert names[16] == "screen"
+
+
+# -- an unconfirmable write says so ------------------------------------------
+
+
+def test_a_failed_write_is_still_a_failure_on_a_model_without_the_capability():
+    """Only models that declare the capability get the benefit of the doubt;
+    for the rest a failed write is just a failed write."""
+    for key in ("JADEAUDIO JA11", "FIIO BTR13"):
+        handle = FakeHandle(rejects=(64, 65, 33, 10))
+        dac = _wired(handle, registry.DEVICES[key])
+        with pytest.raises(FiioError, match="write failed"):
+            dac.set("uac-mode", "uac2")
+
+
+def test_an_unconfirmable_write_is_flagged_rather_than_claimed():
+    """Re-enumeration is indistinguishable from an unplugged cable, so the
+    value is reported with `unverified` set instead of as a confirmed write."""
+    dac = _wired(FakeHandle(rejects=(64, 65, 33, 10)))
+    assert dac.set("uac-mode", "uac2") == 1
+    assert dac.unverified is True
+
+
+def test_a_write_that_goes_through_is_not_flagged():
+    dac = _wired(FakeHandle())
+    dac.get = lambda *a, **k: 1
+    assert dac.set("uac-mode", "uac2", verify=True) == 1
+    assert dac.unverified is False
+
+
+# -- bounds on the setting that redefines another ----------------------------
+
+
+def test_vol_mode_is_bounded():
+    """It changes what cmds 1 and 2 mean, so an undescribable value is worse
+    here than elsewhere."""
+    with pytest.raises(FiioError, match="outside 0..1"):
+        _dry().set("vol-mode", 200)

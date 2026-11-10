@@ -47,7 +47,8 @@ STEPS = {
     "volume": 1, "volume-max": 1, "balance": 1, "filter": 1,
     "led": 1, "screen": 1, "mic-volume": 1, "mic-monitor-volume": 1, "mic-nr": 1,
 }
-ORDER = ["eq-preset", "eq-gain", "volume", "volume-max", "volume-switch", "balance", "filter"]
+ORDER = ["eq-preset", "eq-gain", "volume", "volume-max", "volume-switch", "balance",
+         "filter", "mic", "dre", "dac-mode", "vol-mode"]
 LABELS = {
     "eq-preset": "preset", "eq-gain": "global gain", "volume": "volume",
     "volume-max": "volume limit", "volume-switch": "line-out fixed", "balance": "balance",
@@ -55,6 +56,9 @@ LABELS = {
     "language": "menu language", "brightness": "screen brightness",
     "mic-switch": "microphone", "mic-volume": "mic gain", "mic-monitor": "mic sidetone",
     "mic-monitor-volume": "sidetone volume", "mic-nr": "mic noise reduction",
+    "rotation": "screen rotation", "disp-off": "screen timeout", "mic": "microphone",
+    "dre": "dynamic range", "dac-mode": "DAC mode", "vol-mode": "volume scale",
+    "key-mode": "key mapping", "uac-mode": "USB audio class",
 }
 BAND_COLUMNS = ["frequency", "gain", "Q", "filter"]
 
@@ -88,6 +92,10 @@ def reporting(fn):
             self.call_from_thread(self._status, str(exc), True)
             return None
     return inner
+
+
+#: the values cmd 12 accepts, measured on a KA15
+VOL_MODES = (0, 1)
 
 
 def device_job(fn):
@@ -366,10 +374,17 @@ class FiioApp(App):
     # -- painting -----------------------------------------------------------
 
     def _setting_rows(self):
-        """Editable settings only: a read-only row would just error on +/-."""
+        """Editable settings only: a read-only row would just error on +/-.
+
+        A command that re-enumerates the device is left out too. There is no
+        reconnect here, so nudging one would drop the handle and leave every
+        later read failing until the app was restarted - and undo would do it
+        again. `fiioctl set` handles those, and says when it cannot confirm.
+        """
         def editable(name):
             cmd = registry.COMMANDS.get(name)
-            return bool(cmd and cmd.writable and cmd.readable)
+            return bool(cmd and cmd.writable and cmd.readable
+                        and cmd.id not in registry.RESETS_LINK)
 
         ordered = [n for n in ORDER if n in self.settings and editable(n)]
         extra = [n for n in self.settings if n not in ORDER and editable(n)]
@@ -601,6 +616,12 @@ class FiioApp(App):
             new = cycle(sorted(set(cmd.enum.values())), value, direction)
         elif cmd.codec == "bool":
             new = not value
+        elif name == "vol-mode":
+            # cmd 12 rescales volume and volume-max as it changes, so the
+            # cached range would be stale and the clamp below would then allow
+            # a raw step worth roughly twice the gain. Re-read both with it.
+            self.change_vol_mode(cycle(sorted(VOL_MODES), value, direction))
+            return
         else:
             step = self._step_for(name) * direction
             new = value + step
@@ -703,6 +724,21 @@ class FiioApp(App):
         self.settings["eq-preset"] = value
         self.repaint()
         self.switch_preset(value)
+
+    @replaces_model
+    @reporting
+    def change_vol_mode(self, value):
+        """One job, so nothing reads the volume range between the two writes."""
+        self.dac.set("vol-mode", value)
+        rescaled = {name: self.dac.get(name) for name in ("volume", "volume-max")}
+        rescaled["vol-mode"] = value
+        self.call_from_thread(self._after_vol_mode, rescaled)
+
+    def _after_vol_mode(self, rescaled):
+        self.settings.update(rescaled)
+        self.repaint()
+        self._status(f"volume scale = {rescaled['vol-mode']}; "
+                     f"volume now {rescaled['volume']} / {rescaled['volume-max']}")
 
     @replaces_model
     @reporting

@@ -159,9 +159,9 @@ writes the same way.
 | 4 | filter | rw | u8 (1–7) | `zX` / `UX` |
 | 6 | *unknown* | rw | u8 | `oot` / `iot` |
 | 7 | balance | rw | `[left, right]`, see below | `VX` / `FX` |
-| 8 | volume-switch | rw | bool | `GX` / `$X` |
+| 8 | volume-switch* | rw | bool | `GX` / `$X` |
 | 11 | firmware | r | version bytes | `PX` |
-| 16 | screen | rw | u8 | `IX` / `LX` |
+| 16 | screen* | rw | u8 | `IX` / `LX` |
 | 18 | mic-switch | rw | bool | `qX` / `HX` |
 | 21 | **PEQ band** | rw | see below | `SX` / `wX` |
 | 22 | eq-preset | rw | u8 | `HM` / `xX` |
@@ -180,6 +180,62 @@ writes the same way.
 | 53–57 | *unknown* | rw | — | `q4e`…`Q4e` |
 
 Unknowns are listed in `registry.UNMAPPED` and reachable with `fiioctl raw`.
+
+\* These two ids do not mean the same thing on every model: on a KA15, 8 is
+the headset mic and 16 is screen rotation. Each `Device` says which name
+applies to it, so the bundle's names are never renamed globally.
+
+## The KA15's settings menu
+
+Everything below was mapped on a KA15 on firmware 1.1.6, and none of it comes
+from the app bundle: the app never sends commands 5, 12, 13, 15, 17 or 50, so
+they are firmware extras rather than part of the shared command set. Whether
+the KA15's screen-equipped siblings use the same ids is untested.
+
+Method: a read-only loop polled every command that answers, once a second, with
+a timestamp on each change, while every item on the device's menu was changed
+in a stated order. Matching the order of logged changes to the order of the
+walk gives the mapping, and two items corroborate it independently - `disp-off`
+showed seven distinct values when its list was swept, and `vol` moved commands
+1 and 2 along with itself.
+
+| cmd | menu item | payload | host-writable | notes |
+|---:|---|---|---|---|
+| 5 | dac | u8 | yes | 0 class AB, 1 class H; accepts 0-7, the rest unidentified |
+| 8 | mic | u8 | yes | **0 is enabled**, 1 disabled |
+| 12 | vol | u8 | yes | changes what cmds 1 and 2 mean; see below |
+| 13 | key mode | u8 | **no** | the device sets it; every host write but the current value is refused |
+| 14 | brightness | u8 | yes | 0-10 |
+| 15 | disp-off | u8 | yes | 7 values, 2 is "1 min"; the rest are unlabelled |
+| 16 | rotation | u8 | yes | 0 upright |
+| 17 | language | u8 | yes | **only 0 and 1 accepted**: Chinese and English |
+| 32 | uac mode | u8 | yes | 0 is UAC 1.0, 1 is 2.0; **writing it re-enumerates the device** |
+| 50 | dre | bool | yes | 1 enabled |
+
+`vol` (cmd 12) is not an independent setting: switching it rescaled volume-max
+(cmd 1) from 120 to 60 and volume (cmd 2) from 64 to 128 in one step. So the
+volume commands cannot be read in isolation, and a client that caches a volume
+range needs to re-read it after this changes.
+
+Writing cmd 32 takes the device off the USB bus and brings it back. `hid_write`
+can then report -1 for a write that landed, so `Dac.set` treats the ids in
+`registry.RESETS_LINK` as applied-but-unverifiable rather than failed.
+
+### Not exposed over HID
+
+Negative results, each from a full sweep of commands 1-127 rather than an
+assumption:
+
+- **theme**, swept through every value on the device, moved nothing.
+- **s/pdif** and the **voltage and current display**, toggled on the device,
+  moved nothing. All three are device-local.
+- The **headphone jack** is not reported. Moving the headphone between the
+  3.5 mm and 4.4 mm sockets changed no command in the whole space.
+- Nothing answers above command 50 on this model.
+
+Two commands answer but remain unidentified, and no menu item accounts for
+either: **cmd 3** takes writes across 0-4, and **cmd 9** is read-only, refusing
+every value but the 2 it already holds.
 
 ### PEQ band (cmd 21)
 

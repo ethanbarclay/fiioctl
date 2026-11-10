@@ -40,18 +40,30 @@ class FakeDac:
         self.names = {7: "FD15", 8: "FF5", 9: "FH3"}
         self.values = {
             "firmware": "1.1.6", "eq-preset": 6, "eq-gain": -7.0, "volume": 60,
-            "volume-max": 120, "volume-switch": False, "balance": 0, "filter": 0,
-            "eq-count": 10,
+            "volume-max": 120, "balance": 0, "filter": 0, "eq-count": 10,
+            "mic": 0, "dre": False, "dac-mode": 1, "vol-mode": 0,
+            "uac-mode": 1, "rotation": 0, "disp-off": 2, "key-mode": 0,
+            # cmds 8 and 16 under the names another model uses: present here on
+            # purpose, so the row filter has to be what excludes them
+            "volume-switch": False, "screen": 0,
         }
 
     def get(self, name, timeout=None):
-        if name not in self.values or name in self.spec.unsupported:
+        # Deliberately answers anything it holds a value for, including names
+        # this model does not use, so that the filtering under test is what
+        # keeps them off the screen rather than this fake refusing them.
+        if name not in self.values:
             raise FiioError(f"{name} unsupported")
         return self.values[name]
 
     def set(self, name, value):
         if name in self.spec.unsupported:
             raise FiioError(f"{name} unsupported")
+        if name == "vol-mode":
+            # what a KA15 does: switching the scale rescales cmd 1 and cmd 2
+            # underneath, which is why the UI has to re-read them both
+            self.values["volume-max"] = 60 if value else 120
+            self.values["volume"] = 128 if value else 60
         self.values[name] = value
         self.writes.append((name, value))
         return value
@@ -343,10 +355,21 @@ async def test_bool_setting_toggles(dac):
     app = FiioApp(dac)
     async with app.run_test() as pilot:
         await ready(app, pilot)
-        await select_setting(app, pilot, "volume-switch")
+        await select_setting(app, pilot, "dre")
         await pilot.press("plus")
         await ready(app, pilot)
-        assert ("volume-switch", True) in dac.writes
+        assert ("dre", True) in dac.writes
+
+
+async def test_a_name_this_model_does_not_use_is_not_offered(dac):
+    """cmd 8 is the mic on a KA15, so `volume-switch` must not reach the user."""
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        rows = app._setting_rows()
+        assert "mic" in rows
+        assert "volume-switch" not in rows
+        assert "screen" not in rows
 
 
 async def test_volume_clamps_to_reported_max(dac):
@@ -736,3 +759,30 @@ async def test_a_failing_read_does_not_stop_the_reload(dac, monkeypatch):
     async with app.run_test() as pilot:
         await ready(app, pilot)
         assert app.is_running
+
+
+# -- settings whose write changes more than themselves -----------------------
+
+
+async def test_a_link_resetting_setting_is_not_offered_as_a_row(dac):
+    """uac-mode re-enumerates the device and there is no reconnect here, so
+    nudging it would drop the handle and leave the app dead until restarted."""
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        assert "uac-mode" in dac.values, "the device still reports it"
+        assert "uac-mode" not in app._setting_rows()
+
+
+async def test_changing_the_volume_scale_rereads_the_volume_range(dac):
+    """cmd 12 rescales volume and volume-max as it changes. A stale range let
+    the clamp allow a raw step worth roughly twice the gain."""
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        assert app.settings["volume-max"] == 120
+        await select_setting(app, pilot, "vol-mode")
+        await pilot.press("plus")
+        assert await until(app, pilot, lambda: app.settings["vol-mode"] == 1)
+        assert await until(app, pilot, lambda: app.settings["volume-max"] == 60)
+        assert app.settings["volume"] == 128

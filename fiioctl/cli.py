@@ -138,13 +138,11 @@ def cmd_info(args):
 
 def cmd_state(args):
     with connect(args) as dac:
-        caps = set(dac.spec.caps)
         out = {}
         for name, cmd in registry.COMMANDS.items():
             if not cmd.readable:
                 continue
-            need = registry.CAPS.get(name)
-            if not args.all and (name in dac.spec.unsupported or (need and need not in caps)):
+            if not args.all and not registry.supported(dac.spec, name):
                 continue
             try:
                 # short timeout: an unsupported command simply never answers
@@ -171,8 +169,14 @@ def cmd_set(args):
         # read back by default: the firmware accepts a write silently even when
         # it ignores or clamps the value
         value = dac.set(args.name, args.value, verify=not args.no_verify)
-    emit(labelled(args.name, value, written=True), args.json,
-         f"{args.name} = {shown(args.name, value)}")
+        unverified = dac.unverified
+    out = labelled(args.name, value, written=True)
+    if unverified:
+        out["verified"] = False
+    emit(out, args.json,
+         f"{args.name} = {shown(args.name, value)}"
+         + (" (sent, but the device dropped off the bus before it could be "
+            "confirmed; re-read it once it is back)" if unverified else ""))
     return EXIT_OK
 
 
@@ -384,9 +388,20 @@ def cmd_peq_clear(args):
     return EXIT_OK
 
 
-def known_command_names():
-    """cmd id -> the name fiioctl knows it by, for annotating a scan."""
-    names = {cmd.id: name for name, cmd in registry.COMMANDS.items()}
+def known_command_names(spec=None):
+    """cmd id -> the name fiioctl knows it by, for annotating a scan.
+
+    Two names can share an id (`screen` and `rotation` are both command 16),
+    so with a device in hand prefer the name that model actually uses.
+    """
+    names = {}
+    for name, cmd in registry.COMMANDS.items():
+        # Two names share this id. Take the one the model uses; with no model,
+        # or with neither name known to apply, keep the first declared, which
+        # is the shared command set's own name.
+        if cmd.id in names and not (spec is not None and registry.supported(spec, name)):
+            continue
+        names[cmd.id] = name
     names[registry.BAND_CMD] = "peq-band"
     names[registry.NAME_CMD] = "preset-name"
     return names
@@ -453,10 +468,10 @@ def _report_scan(args, found, names, product):
 
 
 def cmd_scan(args):
-    names = known_command_names()
     if args.diff and not os.path.exists(args.diff):
         raise Abort(EXIT_USAGE, f"no such snapshot: {args.diff}")
     with connect(args) as dac:
+        names = known_command_names(dac.spec)
         found = dac.scan(limit=args.max, timeout=args.timeout)
         product = dac.info.get("product_string")
 

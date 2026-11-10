@@ -139,6 +139,8 @@ class Dac:
         self._wlen = None
         self._last = 0.0
         self._lock = None
+        #: set when a write could not be confirmed, rather than failed outright
+        self.unverified = False
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -436,9 +438,52 @@ class Dac:
         encode = proto.CODECS[cmd.codec][0]
         if encode is None:
             raise FiioError(f"{name} is read-only")
+        # A command id can mean different things on different models, so a name
+        # this model does not use would write a real value to a different
+        # setting: command 8 is the headset mic on a KA15 and the line-out
+        # switch in the app bundle, so each name is wrong on the other's
+        # device. On a KA15 that is measured, and refusing stops someone
+        # muting a microphone while believing they moved a line-out switch.
+        #
+        # Elsewhere it is bookkeeping rather than safety, and the message says
+        # so by attributing the name to this registry instead of the device:
+        # both names encode the same byte to the same command, so refusing one
+        # prevents no action, and for every model but the KA15 the names come
+        # from FiiO's bundle unverified - which the KA15 proved is not a safe
+        # guide to any particular model.
+        #
+        # Only an id another name owns here is refused. A command whose
+        # capability this model simply never declared is left alone, because
+        # capability data is thin outside the KA15 and refusing on it would
+        # block `filter`, `balance` and `brightness` on a dozen models that
+        # plausibly have them. Reads are never refused: they harm nothing and
+        # `state --all` wants them.
+        instead = registry.alternative(self.spec, name)
+        if name in self.spec.unsupported or (instead and
+                                             not registry.supported(self.spec, name)):
+            raise FiioError(
+                f"{name} is not supported on {self.spec.name}"
+                + (f"; fiioctl knows command {cmd.id} as {instead!r} on this model"
+                   if instead else ""))
 
         value = self._coerce(name, cmd, value)
         payload = encode(value)
+        if cmd.id in registry.RESETS_LINK and registry.supported(self.spec, name):
+            # The device leaves the bus to re-enumerate, which can surface as a
+            # failed write even though it landed, and nothing can be read back
+            # afterwards on this handle.
+            #
+            # A failed write here is genuinely ambiguous: re-enumeration looks
+            # exactly like an unplugged cable or a permission problem. So the
+            # value is reported, `unverified` is set, and the caller says so
+            # rather than presenting a guess as a confirmed write. Models that
+            # never declared the capability are not covered, because for them a
+            # failure is just a failure.
+            try:
+                self.send(cmd.id, payload)
+            except FiioError:
+                self.unverified = True
+            return proto.CODECS[cmd.codec][1](payload)
         self.send(cmd.id, payload)
         # Report the value as it went over the wire, not as it was typed.
         sent = proto.CODECS[cmd.codec][1](payload)
