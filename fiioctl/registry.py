@@ -132,6 +132,11 @@ def alternative(spec, name):
     return None
 
 
+#: Writing these ids makes the device drop off the USB bus and come back, so
+#: the write can report a failure it did not have and nothing can be read back
+#: until it re-enumerates. Confirmed for cmd 32 on a KA15.
+RESETS_LINK = {32}
+
 #: Commands whose payload is a structured PEQ band rather than a scalar.
 BAND_CMD = 21
 #: Preset-name command: payload is [slot, *utf8].

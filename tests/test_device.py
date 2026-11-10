@@ -393,3 +393,33 @@ def test_alternative_is_derived_from_the_ids_not_a_second_table():
     assert registry.alternative(registry.KA15, "volume") is None
 
 
+# -- writes that take the device off the bus ---------------------------------
+
+
+def test_a_re_enumerating_write_is_not_reported_as_a_failure():
+    """Writing uac-mode makes the KA15 re-enumerate, so hid_write can report
+    -1 for a write that landed. Reporting that as an error sent people chasing
+    a failure that had in fact applied."""
+    handle = FakeHandle(rejects=(64, 65, 33, 10))  # every length fails
+    assert registry.COMMANDS["uac-mode"].id in registry.RESETS_LINK
+    assert _wired(handle).set("uac-mode", "uac1") == 0
+
+
+def test_an_ordinary_write_still_raises_when_it_fails():
+    handle = FakeHandle(rejects=(64, 65, 33, 10))
+    with pytest.raises(FiioError, match="write failed"):
+        _wired(handle).set("volume", 30)
+
+
+def test_a_re_enumerating_write_is_never_verified():
+    """Nothing can be read back on a handle the device just dropped."""
+    handle = FakeHandle()
+    dac = _wired(handle)
+
+    def refuse(*a, **k):
+        raise AssertionError("set() must not read back after re-enumeration")
+
+    dac.get = refuse
+    assert dac.set("uac-mode", "uac2", verify=True) == 1
+
+

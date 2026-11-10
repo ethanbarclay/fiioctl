@@ -448,6 +448,14 @@ class Dac:
 
         value = self._coerce(name, cmd, value)
         payload = encode(value)
+        if cmd.id in registry.RESETS_LINK:
+            # The device leaves the bus to re-enumerate, which can surface as a
+            # failed write even though it landed, and nothing can be read back
+            # afterwards on this handle. Report what was sent and let the caller
+            # reconnect to confirm.
+            with contextlib.suppress(FiioError):
+                self.send(cmd.id, payload)
+            return proto.CODECS[cmd.codec][1](payload)
         self.send(cmd.id, payload)
         # Report the value as it went over the wire, not as it was typed.
         sent = proto.CODECS[cmd.codec][1](payload)
