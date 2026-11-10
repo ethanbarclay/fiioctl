@@ -4,6 +4,37 @@ Notable changes per release. Versions follow [semantic versioning](https://semve
 with the caveat that a 0.x line can break its CLI surface between minor versions
 if a protocol finding demands it.
 
+## Unreleased
+
+The KA15's settings menu, mapped against firmware 1.1.6 by changing each item
+on the device while a timestamped read loop watched the command space.
+
+### Added
+
+- Eight settings the app never touches: `dac-mode`, `disp-off`, `dre`,
+  `key-mode` (read-only), `mic`, `rotation`, `uac-mode` and `vol-mode`. They
+  show up in `state` and in the terminal UI for models that declare them.
+- `docs/PROTOCOL.md` gains a KA15 section, including the negative results:
+  theme, s/pdif, the voltage and current display and the headphone jack move
+  nothing in the command space, so they are device-local. Nothing answers above
+  command 50 on this model.
+
+### Fixed
+
+- A write to a command name this model does not use is refused instead of
+  landing on the wrong setting. On a KA15, command 8 is the headset mic rather
+  than the app's `volume-switch`, so `fiioctl set volume-switch 1` silently
+  disabled the microphone; it now says which name this model uses for that
+  command. The ids are not renamed globally, because the app's names are right
+  for other models.
+- `fiioctl scan` labels a command with the name the connected model uses, not
+  whichever name was declared last for that id.
+- Writing `uac-mode` no longer reports a failure for a write that landed. The
+  device leaves the USB bus to re-enumerate, which makes `hid_write` return -1,
+  so these writes are reported as applied and never verified.
+- `language` is documented as accepting only its two values. The firmware
+  rejects anything above 1, so there was nothing more to find there.
+
 ## 0.2.1 - 2026-11-08
 
 Linux fixes, found by running on Linux for the first time. If you installed
