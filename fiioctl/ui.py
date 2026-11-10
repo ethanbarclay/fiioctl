@@ -47,7 +47,8 @@ STEPS = {
     "volume": 1, "volume-max": 1, "balance": 1, "filter": 1,
     "led": 1, "screen": 1, "mic-volume": 1, "mic-monitor-volume": 1, "mic-nr": 1,
 }
-ORDER = ["eq-preset", "eq-gain", "volume", "volume-max", "volume-switch", "balance", "filter"]
+ORDER = ["eq-preset", "eq-gain", "volume", "volume-max", "volume-switch", "balance",
+         "filter", "mic", "dre", "dac-mode", "vol-mode", "uac-mode"]
 LABELS = {
     "eq-preset": "preset", "eq-gain": "global gain", "volume": "volume",
     "volume-max": "volume limit", "volume-switch": "line-out fixed", "balance": "balance",
@@ -55,6 +56,9 @@ LABELS = {
     "language": "menu language", "brightness": "screen brightness",
     "mic-switch": "microphone", "mic-volume": "mic gain", "mic-monitor": "mic sidetone",
     "mic-monitor-volume": "sidetone volume", "mic-nr": "mic noise reduction",
+    "rotation": "screen rotation", "disp-off": "screen timeout", "mic": "microphone",
+    "dre": "dynamic range", "dac-mode": "DAC mode", "vol-mode": "volume scale",
+    "key-mode": "key mapping", "uac-mode": "USB audio class",
 }
 BAND_COLUMNS = ["frequency", "gain", "Q", "filter"]
 

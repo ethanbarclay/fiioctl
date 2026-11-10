@@ -58,10 +58,35 @@ COMMANDS = {
     "eq-count": Cmd(24, "u8", mode="r", help="Number of PEQ bands the device exposes"),
     "firmware": Cmd(11, "version", mode="r", help="Firmware version"),
     "screen": Cmd(16, "u8", help="Screen orientation"),
-    # identified by changing the setting on the device and diffing a scan
+    # Identified on a KA15 by changing each setting on the device while a
+    # timestamped read loop watched every command that answers, then matching
+    # the order of the changes to the order of the menu walk.
+    #
+    # Two groups, and the difference matters. 5, 12, 13, 15, 17 and 50 appear
+    # nowhere in the app bundle, so they are firmware extras rather than part
+    # of the shared command set. 8 and 16 *are* in the bundle, under other
+    # names: on a KA15 cmd 8 is the headset mic rather than a line-out switch.
+    # So `mic` and `rotation` are separate entries on the same ids, and each
+    # model says through `caps` and `unsupported` which name applies to it.
+    # Renaming them outright would mislabel every other model.
     "language": Cmd(17, "u8", enum={"chinese": 0, "english": 1},
                     help="On-screen menu language"),
     "brightness": Cmd(14, "u8", rng=(0, 10), help="Screen brightness, 0-10"),
+    "rotation": Cmd(16, "u8", help="Screen rotation; 0 is upright"),
+    "disp-off": Cmd(15, "u8", rng=(0, 6),
+                    help="Screen blanking timeout; 2 is '1 min' on a KA15"),
+    "dac-mode": Cmd(5, "u8", enum={"class-ab": 0, "class-h": 1},
+                    help="DAC output stage mode"),
+    "vol-mode": Cmd(12, "u8",
+                    help="Volume scale; changes what volume and volume-max mean"),
+    "key-mode": Cmd(13, "u8", mode="r",
+                    help="Physical key mapping; the device sets it, writes are refused"),
+    "uac-mode": Cmd(32, "u8", enum={"uac1": 0, "uac2": 1},
+                    help="USB Audio Class; writing it re-enumerates the device"),
+    "dre": Cmd(50, "bool", help="Dynamic range enhancement"),
+    # 0 is enabled here, so this is an enum rather than a bool: `mic off`
+    # reads better than a boolean whose true means disabled.
+    "mic": Cmd(8, "u8", enum={"on": 0, "off": 1}, help="Headset microphone"),
     "led": Cmd(51, "u8", help="Indicator LED configuration"),
     "mic-switch": Cmd(18, "bool", help="Microphone enable"),
     "mic-volume": Cmd(34, "u8", help="Microphone input gain"),
@@ -81,7 +106,11 @@ CAPS = {
     "screen": "screen", "language": "screen", "brightness": "screen",
     "mic-switch": "mic", "mic-volume": "mic", "mic-monitor": "mic",
     "mic-monitor-volume": "mic", "mic-nr": "mic",
+    "rotation": "screen", "disp-off": "screen",
+    "mic": "headset-mic", "dac-mode": "dac-mode", "vol-mode": "vol-mode",
+    "key-mode": "keys", "uac-mode": "uac", "dre": "dre",
 }
+
 
 #: Commands whose payload is a structured PEQ band rather than a scalar.
 BAND_CMD = 21
@@ -95,7 +124,11 @@ DESTRUCTIVE = {25: "save EQ to slot", 27: "unknown action", 33: "factory reset"}
 
 #: Commands observed in the app bundle but with no confirmed semantics. Reachable
 #: through `fiioctl raw`; promote them here as they get identified.
-UNMAPPED = {6: "unknown (get/set, 1 byte)", 27: "unknown action (no payload)",
+UNMAPPED = {3: "unknown setting (writable; a KA15 accepts 0-4)",
+            6: "unknown (get/set, 1 byte)",
+            9: "unknown status (read-only; a KA15 accepts only its current value)",
+            19: "echo of the preset-name latch, 10 bytes wide; ignores its payload",
+            27: "unknown action (no payload)",
             53: "dynamics?", 54: "dynamics?", 55: "dynamics?", 56: "dynamics?", 57: "dynamics?"}
 
 GENERAL_PRESETS = {
@@ -150,11 +183,19 @@ KA15 = Device(
     name_slots=(7, 8, 9),
     name_offset=7,  # USER1 (slot 7) is name index 0 on the KA15
     name_max=8,
-    # the KA15 does have a screen, with language and brightness in its own menu
-    caps=("eq", "peq", "preset-names", "volume", "filter", "balance", "screen"),
+    # The KA15 has a screen and its own settings menu; every item on it was
+    # mapped against firmware 1.1.6 except theme, s/pdif and the voltage and
+    # current display, which move nothing in the command space and so are
+    # device-local. The headphone jack is not reported either.
+    caps=("eq", "peq", "preset-names", "volume", "filter", "balance", "screen",
+          "headset-mic", "dac-mode", "vol-mode", "keys", "uac", "dre"),
     # Verified on firmware 1.1.6: cmd 26 never replies. The KA15 has no separate
     # EQ switch; preset 10 ("off") is how the EQ is bypassed.
-    unsupported=("eq-switch",),
+    #
+    # volume-switch and screen are the app bundle's names for cmds 8 and 16.
+    # On this model those ids are the headset mic and screen rotation, so the
+    # generic names are refused here and `mic` and `rotation` take their place.
+    unsupported=("eq-switch", "volume-switch", "screen"),
     cloud_id=110,
     verified=True,
 )

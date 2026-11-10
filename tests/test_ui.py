@@ -40,8 +40,11 @@ class FakeDac:
         self.names = {7: "FD15", 8: "FF5", 9: "FH3"}
         self.values = {
             "firmware": "1.1.6", "eq-preset": 6, "eq-gain": -7.0, "volume": 60,
-            "volume-max": 120, "volume-switch": False, "balance": 0, "filter": 0,
-            "eq-count": 10,
+            "volume-max": 120, "balance": 0, "filter": 0, "eq-count": 10,
+            # cmds 8 and 16 are the mic and rotation on this model, so
+            # volume-switch and screen are deliberately absent
+            "mic": 0, "dre": False, "dac-mode": 1, "vol-mode": 0,
+            "uac-mode": 1, "rotation": 0, "disp-off": 2, "key-mode": 0,
         }
 
     def get(self, name, timeout=None):
@@ -343,10 +346,21 @@ async def test_bool_setting_toggles(dac):
     app = FiioApp(dac)
     async with app.run_test() as pilot:
         await ready(app, pilot)
-        await select_setting(app, pilot, "volume-switch")
+        await select_setting(app, pilot, "dre")
         await pilot.press("plus")
         await ready(app, pilot)
-        assert ("volume-switch", True) in dac.writes
+        assert ("dre", True) in dac.writes
+
+
+async def test_a_name_this_model_does_not_use_is_not_offered(dac):
+    """cmd 8 is the mic on a KA15, so `volume-switch` must not reach the user."""
+    app = FiioApp(dac)
+    async with app.run_test() as pilot:
+        await ready(app, pilot)
+        rows = app._setting_rows()
+        assert "mic" in rows
+        assert "volume-switch" not in rows
+        assert "screen" not in rows
 
 
 async def test_volume_clamps_to_reported_max(dac):
