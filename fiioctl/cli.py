@@ -390,9 +390,10 @@ def known_command_names(spec=None):
     """
     names = {}
     for name, cmd in registry.COMMANDS.items():
-        if cmd.id in names and (spec is None or name in spec.unsupported):
-            # Two names share this id. Keep the one this model uses, or the
-            # bundle's own name when there is no model to ask.
+        # Two names share this id. Take the one the model uses; with no model,
+        # or with neither name known to apply, keep the first declared, which
+        # is the shared command set's own name.
+        if cmd.id in names and not (spec is not None and registry.supported(spec, name)):
             continue
         names[cmd.id] = name
     names[registry.BAND_CMD] = "peq-band"

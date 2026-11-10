@@ -486,3 +486,23 @@ def test_supported_answers_for_both_models():
     assert registry.supported(ja11, "eq-preset") and registry.supported(ka15, "eq-preset")
 
 
+# -- one id, two names: the parts a KA15-only test would miss ----------------
+
+
+def test_scan_labels_keep_the_shared_name_on_models_that_never_claimed_it():
+    """The inverse of the KA15 case, and the one a KA15-only test misses.
+
+    `mic` and `rotation` are absent from every other profile's `unsupported`
+    tuple, so deciding on that alone let the later entry win the label and a
+    JA11 scan printed settings that model has never been shown to have.
+    """
+    for key in ("JADEAUDIO JA11", "FIIO KA17", "FIIO BTR13"):
+        names = cli.known_command_names(registry.DEVICES[key])
+        assert names[8] == "volume-switch", key
+        assert names[16] == "screen", key
+    for spec in (registry.DEFAULT, None):
+        names = cli.known_command_names(spec)
+        assert names[8] == "volume-switch"
+        assert names[16] == "screen"
+
+
