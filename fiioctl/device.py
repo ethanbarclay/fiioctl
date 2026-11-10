@@ -436,6 +436,15 @@ class Dac:
         encode = proto.CODECS[cmd.codec][0]
         if encode is None:
             raise FiioError(f"{name} is read-only")
+        # A command id can mean different things on different models, so a name
+        # this model does not use would write a real value to the wrong
+        # setting: on a KA15, `volume-switch` is the headset mic. Reads are
+        # left alone, since they harm nothing and `state --all` wants them.
+        if name in self.spec.unsupported:
+            instead = registry.alternative(self.spec, name)
+            raise FiioError(
+                f"{name} is not supported on {self.spec.name}"
+                + (f"; this model calls command {cmd.id} {instead!r}" if instead else ""))
 
         value = self._coerce(name, cmd, value)
         payload = encode(value)

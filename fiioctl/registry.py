@@ -112,6 +112,26 @@ CAPS = {
 }
 
 
+def alternative(spec, name):
+    """Another name for the same command id that *is* supported on this model.
+
+    Two models can use one command id for different things, so the name a user
+    reached for may be the wrong one for the device in front of them rather
+    than wrong in general. Derived from the ids themselves so that adding a
+    pair like `screen`/`rotation` needs no second table to keep in step.
+    """
+    cmd = COMMANDS.get(name)
+    if cmd is None:
+        return None
+    for other, candidate in COMMANDS.items():
+        if other == name or candidate.id != cmd.id or other in spec.unsupported:
+            continue
+        need = CAPS.get(other)
+        if need is None or need in spec.caps:
+            return other
+    return None
+
+
 #: Commands whose payload is a structured PEQ band rather than a scalar.
 BAND_CMD = 21
 #: Preset-name command: payload is [slot, *utf8].

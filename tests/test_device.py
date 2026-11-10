@@ -356,3 +356,40 @@ def test_write_profile_flattens_the_bands_it_does_not_use():
     _, written = _dry().write_profile(-3.0, [], 2)
     assert [(b["index"], b["freq"], b["gain"], b["q"]) for b in written] == [
         (0, 1000, 0.0, 0.7), (1, 1000, 0.0, 0.7)]
+
+
+# -- one command id, two meanings --------------------------------------------
+
+
+def test_a_write_to_a_name_this_model_does_not_use_is_refused():
+    """The KA15's command 8 is its headset mic, not a line-out switch.
+
+    Allowing the write would silently disable someone's microphone, which is
+    worse than an unknown command: the inherited name invites it.
+    """
+    handle = FakeHandle()
+    with pytest.raises(FiioError, match="not supported on FIIO KA15"):
+        _wired(handle).set("volume-switch", True)
+    assert handle.sent == [], "nothing should have gone to the device"
+
+
+def test_the_refusal_names_the_command_this_model_does_use():
+    dac = _wired(FakeHandle())
+    with pytest.raises(FiioError, match="calls command 8 'mic'"):
+        dac.set("volume-switch", True)
+
+
+def test_a_model_that_does_use_the_generic_name_still_writes_it():
+    """The fix must stay device-scoped: JA11 has no mic and keeps cmd 8."""
+    handle = FakeHandle()
+    dac = _wired(handle, registry.DEVICES["JADEAUDIO JA11"])
+    dac.set("volume-switch", True)
+    assert handle.sent, "the write should have gone out"
+
+
+def test_alternative_is_derived_from_the_ids_not_a_second_table():
+    assert registry.alternative(registry.KA15, "volume-switch") == "mic"
+    assert registry.alternative(registry.KA15, "screen") == "rotation"
+    assert registry.alternative(registry.KA15, "volume") is None
+
+
