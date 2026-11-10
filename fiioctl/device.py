@@ -139,6 +139,8 @@ class Dac:
         self._wlen = None
         self._last = 0.0
         self._lock = None
+        #: set when a write could not be confirmed, rather than failed outright
+        self.unverified = False
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -466,13 +468,21 @@ class Dac:
 
         value = self._coerce(name, cmd, value)
         payload = encode(value)
-        if cmd.id in registry.RESETS_LINK:
+        if cmd.id in registry.RESETS_LINK and registry.supported(self.spec, name):
             # The device leaves the bus to re-enumerate, which can surface as a
             # failed write even though it landed, and nothing can be read back
-            # afterwards on this handle. Report what was sent and let the caller
-            # reconnect to confirm.
-            with contextlib.suppress(FiioError):
+            # afterwards on this handle.
+            #
+            # A failed write here is genuinely ambiguous: re-enumeration looks
+            # exactly like an unplugged cable or a permission problem. So the
+            # value is reported, `unverified` is set, and the caller says so
+            # rather than presenting a guess as a confirmed write. Models that
+            # never declared the capability are not covered, because for them a
+            # failure is just a failure.
+            try:
                 self.send(cmd.id, payload)
+            except FiioError:
+                self.unverified = True
             return proto.CODECS[cmd.codec][1](payload)
         self.send(cmd.id, payload)
         # Report the value as it went over the wire, not as it was typed.

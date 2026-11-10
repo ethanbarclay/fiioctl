@@ -506,3 +506,31 @@ def test_scan_labels_keep_the_shared_name_on_models_that_never_claimed_it():
         assert names[16] == "screen"
 
 
+# -- an unconfirmable write says so ------------------------------------------
+
+
+def test_a_failed_write_is_still_a_failure_on_a_model_without_the_capability():
+    """Only models that declare the capability get the benefit of the doubt;
+    for the rest a failed write is just a failed write."""
+    for key in ("JADEAUDIO JA11", "FIIO BTR13"):
+        handle = FakeHandle(rejects=(64, 65, 33, 10))
+        dac = _wired(handle, registry.DEVICES[key])
+        with pytest.raises(FiioError, match="write failed"):
+            dac.set("uac-mode", "uac2")
+
+
+def test_an_unconfirmable_write_is_flagged_rather_than_claimed():
+    """Re-enumeration is indistinguishable from an unplugged cable, so the
+    value is reported with `unverified` set instead of as a confirmed write."""
+    dac = _wired(FakeHandle(rejects=(64, 65, 33, 10)))
+    assert dac.set("uac-mode", "uac2") == 1
+    assert dac.unverified is True
+
+
+def test_a_write_that_goes_through_is_not_flagged():
+    dac = _wired(FakeHandle())
+    dac.get = lambda *a, **k: 1
+    assert dac.set("uac-mode", "uac2", verify=True) == 1
+    assert dac.unverified is False
+
+

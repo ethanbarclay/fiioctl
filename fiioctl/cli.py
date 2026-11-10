@@ -169,8 +169,14 @@ def cmd_set(args):
         # read back by default: the firmware accepts a write silently even when
         # it ignores or clamps the value
         value = dac.set(args.name, args.value, verify=not args.no_verify)
-    emit(labelled(args.name, value, written=True), args.json,
-         f"{args.name} = {shown(args.name, value)}")
+        unverified = dac.unverified
+    out = labelled(args.name, value, written=True)
+    if unverified:
+        out["verified"] = False
+    emit(out, args.json,
+         f"{args.name} = {shown(args.name, value)}"
+         + (" (sent, but the device dropped off the bus before it could be "
+            "confirmed; re-read it once it is back)" if unverified else ""))
     return EXIT_OK
 
 
