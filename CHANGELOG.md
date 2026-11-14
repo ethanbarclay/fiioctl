@@ -18,6 +18,11 @@ on the device while a timestamped read loop watched the command space.
   theme, s/pdif, the voltage and current display and the headphone jack move
   nothing in the command space, so they are device-local. Nothing answers above
   command 50 on this model.
+- `fiioctl diagnose`, a read-only report for a device that will not talk. It
+  gathers the HID report descriptor and the report sizes it declares, the USB
+  interfaces and endpoints, file access, and how the device answers five GET
+  commands at every write length and report id worth trying. It sends nothing
+  but GETs, and `--no-probe` sends nothing at all.
 
 ### Fixed
 
