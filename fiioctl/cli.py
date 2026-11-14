@@ -11,7 +11,7 @@ import json
 import os
 import sys
 
-from . import __version__, curve, eqdb, library, proto, registry
+from . import __version__, curve, diagnose, eqdb, library, proto, registry
 from .device import Dac, FiioError, candidates
 
 EXIT_OK, EXIT_USAGE, EXIT_DEVICE, EXIT_DATA = 0, 2, 3, 4
@@ -499,6 +499,20 @@ def cmd_raw(args):
     return EXIT_OK
 
 
+def cmd_diagnose(args):
+    if not args.no_probe:
+        print("probing every FiiO HID interface with read-only commands; this takes "
+              "under a minute", file=sys.stderr)
+    result = diagnose.report(run_probe=not args.no_probe)
+    if args.json:
+        emit(result, True)
+    else:
+        print("\n".join(diagnose.summary(result)))
+        print("\nDetails:")
+        print(json.dumps(result, indent=2, default=str))
+    return EXIT_DEVICE if result.get("error") or not result["interfaces"] else EXIT_OK
+
+
 def print_profile(profile):
     """Human-readable dump of a profile: heading, curve, then the bands."""
     print(f"{profile['name']}  [{profile['source']}]")
@@ -880,6 +894,12 @@ def build_parser():
     sc.add_argument("--diff", metavar="FILE",
                     help="compare against a snapshot instead of listing everything")
     sc.set_defaults(fn=cmd_scan)
+
+    dg = sub.add_parser("diagnose", help="read-only report on why a device will not "
+                        "talk: descriptors, USB layout and how it answers")
+    dg.add_argument("--no-probe", action="store_true",
+                    help="only describe the device; send it nothing")
+    dg.set_defaults(fn=cmd_diagnose)
 
     rw = sub.add_parser("raw", help="send an arbitrary command (escape hatch)")
     rw.add_argument("cmd", type=lambda v: int(v, 0), metavar="CMD")
