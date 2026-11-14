@@ -61,8 +61,9 @@ on the device while a timestamped read loop watched the command space.
 - A device that ignores the write length fiioctl picked is no longer just
   silent. On Linux's hidraw a write succeeds whatever the device makes of it, so
   the fallback to other lengths never ran. Now a read that gets no answer is
-  sent again at the other lengths, and the first one answered is kept. This
-  stops once anything has answered, or after three unanswered reads.
+  sent again at the other lengths, waiting half a second at each, and the first
+  one answered is kept. This stops once anything has answered, or after three
+  unanswered reads.
 - An unpadded write length, once it worked, is kept. Every later write started
   again from 64 bytes.
 

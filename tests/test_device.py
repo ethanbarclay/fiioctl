@@ -623,3 +623,12 @@ def test_vol_mode_is_bounded():
     here than elsewhere."""
     with pytest.raises(FiioError, match="outside 0..1"):
         _dry().set("vol-mode", 200)
+
+
+def test_the_other_lengths_wait_less_than_a_full_timeout(monkeypatch):
+    dac, _ = _picky(answers=())
+    waits = []
+    monkeypatch.setattr(dac, "_reply", lambda _cmd, timeout: waits.append(timeout))
+    with pytest.raises(FiioError):
+        dac.request(2, timeout=2.0)
+    assert waits == [2.0] + [Dac.RETRY_TIMEOUT] * 3

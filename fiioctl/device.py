@@ -132,6 +132,9 @@ class Dac:
     #: how many unanswered requests try every length before silence is believed;
     #: more than one, since the first command may be one the model lacks
     LENGTH_PROBES = 3
+    #: seconds to wait at each other length. A device that answers does so within
+    #: milliseconds, and a dead one would otherwise cost four full timeouts a read
+    RETRY_TIMEOUT = 0.5
 
     def __init__(self, handle, info, spec, trace=False, dry=False):
         self.handle = handle
@@ -345,7 +348,7 @@ class Dac:
                 self._write(packet)
             except FiioError:
                 continue
-            payload = self._reply(cmd, timeout)
+            payload = self._reply(cmd, min(timeout, self.RETRY_TIMEOUT))
             if payload is not None:
                 return payload
         self._wlen = first
