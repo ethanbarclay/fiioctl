@@ -246,7 +246,7 @@ class Dac:
             self._log("TX", buf)
             return
         self._pace()
-        lens = (self._wlen,) if self._wlen else self.WRITE_LENS
+        lens = self.WRITE_LENS if self._wlen is None else (self._wlen,)
         last = None
         for n in lens:
             out = buf.ljust(n, b"\x00") if n else buf

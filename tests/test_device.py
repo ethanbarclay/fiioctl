@@ -53,6 +53,16 @@ def test_working_length_is_remembered():
     assert [len(p) for p in handle.sent] == [65]
 
 
+def test_an_unpadded_length_is_remembered_too():
+    handle = FakeHandle(rejects=(64, 65, 33))
+    dac = _wired(handle)
+    dac.send(2, b"\x01")
+    handle.sent.clear()
+    dac._last = 0.0
+    dac.send(2, b"\x02")
+    assert [len(p) for p in handle.sent] == [10]
+
+
 def test_write_that_fails_at_every_length_raises():
     # the unpadded attempt is 10 bytes here: report id plus a 9-byte frame
     handle = FakeHandle(rejects=(64, 65, 33, 10))
