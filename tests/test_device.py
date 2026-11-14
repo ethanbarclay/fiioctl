@@ -70,6 +70,77 @@ def test_write_that_fails_at_every_length_raises():
         _wired(handle).send(2, b"\x01")
 
 
+# -- a device that ignores some write lengths ----------------------------------
+
+
+class PickyHandle(FakeHandle):
+    """Every write succeeds, as on hidraw, but only some lengths get an answer."""
+
+    def __init__(self, answers):
+        super().__init__()
+        self.answers = answers
+        self.queue = []
+
+    def write(self, out):
+        if len(out) in self.answers:
+            cmd = out[5]
+            self.queue.append(list(bytes([7, 0xBB, 0x0B, 0, 0, cmd, 1, 59, 0, 0xEE])))
+        return super().write(out)
+
+    def read(self, _size, timeout_ms=0):
+        return self.queue.pop(0) if self.queue else []
+
+
+def _picky(answers):
+    handle = PickyHandle(answers)
+    return _wired(handle), handle
+
+
+def test_silence_tries_the_other_lengths_and_keeps_the_one_answered():
+    # unpadded, a GET is 9 bytes and a one-byte SET 10: report id plus the frame
+    dac, handle = _picky(answers=(9, 10))
+    assert dac.request(2, timeout=0.01) == bytes([59])
+    assert [len(p) for p in handle.sent] == [64, 65, 33, 9]
+    handle.sent.clear()
+    dac.send(2, b"\x01")
+    assert [len(p) for p in handle.sent] == [10]
+
+
+def test_silence_at_every_length_times_out_and_keeps_the_first():
+    dac, handle = _picky(answers=())
+    with pytest.raises(FiioError, match="timed out"):
+        dac.request(2, timeout=0.01)
+    assert [len(p) for p in handle.sent] == [64, 65, 33, 9]
+    handle.sent.clear()
+    dac.send(2, b"\x01")
+    assert [len(p) for p in handle.sent] == [64]
+
+
+def test_a_silent_device_stops_trying_lengths_after_a_few_requests():
+    dac, handle = _picky(answers=())
+    for _ in range(Dac.LENGTH_PROBES + 1):
+        with pytest.raises(FiioError):
+            dac.request(2, timeout=0.01)
+    assert len(handle.sent) == 4 * Dac.LENGTH_PROBES + 1
+
+
+def test_once_the_device_answers_silence_is_believed():
+    dac, handle = _picky(answers=(64,))
+    dac.request(2, timeout=0.01)
+    handle.answers = ()
+    handle.sent.clear()
+    with pytest.raises(FiioError, match="timed out"):
+        dac.request(2, timeout=0.01)
+    assert [len(p) for p in handle.sent] == [64]
+
+
+def test_a_set_that_gets_no_answer_is_not_sent_again():
+    dac, handle = _picky(answers=())
+    with pytest.raises(FiioError):
+        dac.request(2, b"\x01", hdr=device.proto.SET, timeout=0.01)
+    assert len(handle.sent) == 1
+
+
 # -- sharing a hidraw node ----------------------------------------------------
 
 

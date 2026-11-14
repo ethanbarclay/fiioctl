@@ -129,6 +129,9 @@ class Dac:
 
     #: write lengths to try, in order; the working one is cached per connection
     WRITE_LENS = (64, 65, 33, 0)
+    #: how many unanswered requests try every length before silence is believed;
+    #: more than one, since the first command may be one the model lacks
+    LENGTH_PROBES = 3
 
     def __init__(self, handle, info, spec, trace=False, dry=False):
         self.handle = handle
@@ -139,6 +142,9 @@ class Dac:
         self._wlen = None
         self._last = 0.0
         self._lock = None
+        #: unanswered requests that may still try the other write lengths;
+        #: zeroed once anything answers, as that proves the length works
+        self._probes = self.LENGTH_PROBES
         #: set when a write could not be confirmed, rather than failed outright
         self.unverified = False
 
@@ -291,26 +297,59 @@ class Dac:
 
     def request(self, cmd, data=b"", hdr=proto.GET, timeout=None):
         """Send a command and return the payload of the matching reply."""
+        packet = proto.frame(hdr, cmd, data)
+        timeout = timeout or self.spec.timeout
         with self._turn():
-            self._write(proto.frame(hdr, cmd, data))
+            self._write(packet)
             if self.dry:
                 raise FiioError("--dry-run cannot read values back from the device")
-            deadline = time.monotonic() + (timeout or self.spec.timeout)
-            while True:
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise FiioError(f"timed out waiting for reply to command {cmd}")
-                try:
-                    report = self.handle.read(65, timeout_ms=max(1, int(left * 1000)))
-                except OSError as exc:
-                    raise FiioError(f"read failed: {exc}") from exc
-                if not report:
-                    continue
-                if self.trace:
-                    self._log("RX", bytes(report))
-                parsed = proto.parse(report)
-                if parsed and parsed[0] == cmd:
-                    return parsed[1]
+            payload = self._reply(cmd, timeout)
+            # a write that succeeds says nothing about whether the device took it,
+            # so until something answers, silence may mean the length is wrong.
+            # Only a GET is sent again, as asking twice changes nothing.
+            if payload is None and self._probes and hdr == proto.GET:
+                self._probes -= 1
+                payload = self._retry_lengths(packet, cmd, timeout)
+            if payload is None:
+                raise FiioError(f"timed out waiting for reply to command {cmd}")
+            self._probes = 0
+            return payload
+
+    def _reply(self, cmd, timeout):
+        """The payload of the next reply to `cmd`, or None if none comes in time."""
+        deadline = time.monotonic() + timeout
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None
+            try:
+                report = self.handle.read(65, timeout_ms=max(1, int(left * 1000)))
+            except OSError as exc:
+                raise FiioError(f"read failed: {exc}") from exc
+            if not report:
+                continue
+            if self.trace:
+                self._log("RX", bytes(report))
+            parsed = proto.parse(report)
+            if parsed and parsed[0] == cmd:
+                return parsed[1]
+
+    def _retry_lengths(self, packet, cmd, timeout):
+        """Send `packet` at each other write length, keeping the first one answered."""
+        first = self._wlen
+        for n in self.WRITE_LENS:
+            if n == first:
+                continue
+            self._wlen = n
+            try:
+                self._write(packet)
+            except FiioError:
+                continue
+            payload = self._reply(cmd, timeout)
+            if payload is not None:
+                return payload
+        self._wlen = first
+        return None
 
     # -- typed access -------------------------------------------------------
 

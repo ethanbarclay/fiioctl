@@ -58,6 +58,13 @@ on the device while a timestamped read loop watched the command space.
   so these writes are reported as applied and never verified.
 - `language` is documented as accepting only its two values. The firmware
   rejects anything above 1, so there was nothing more to find there.
+- A device that ignores the write length fiioctl picked is no longer just
+  silent. On Linux's hidraw a write succeeds whatever the device makes of it, so
+  the fallback to other lengths never ran. Now a read that gets no answer is
+  sent again at the other lengths, and the first one answered is kept. This
+  stops once anything has answered, or after three unanswered reads.
+- An unpadded write length, once it worked, is kept. Every later write started
+  again from 64 bytes.
 
 ## 0.2.1 - 2026-11-08
 
