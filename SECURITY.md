@@ -10,6 +10,17 @@ exploitable.
 Include the `fiioctl` version, your OS, and what the tool was talking to (a
 device, FiiO's servers, or neither). A reply should come within a week.
 
+## Verifying a release
+
+Releases after 0.2.1 carry a signed build provenance attestation for every
+wheel and sdist, stored with GitHub and attached to the release as
+`fiioctl-<version>.intoto.jsonl`. To check that a file was built by this
+repository's release workflow:
+
+```
+gh attestation verify fiioctl-<version>-py3-none-any.whl --repo ethanbarclay/fiioctl
+```
+
 ## Supported versions
 
 The latest 0.x release is the only supported one. There is no backporting while

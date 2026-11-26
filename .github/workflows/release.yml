@@ -20,6 +20,13 @@ jobs:
   build:
     name: build and check the artifacts
     runs-on: ubuntu-latest
+    # Signing the provenance below needs an OIDC token and somewhere to record
+    # the attestation. Job-level permissions replace the top-level ones, so
+    # contents: read is restated.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -47,10 +54,28 @@ jobs:
       - name: Metadata renders on PyPI
         run: python -m twine check dist/*
 
+      # Provenance is signed here, before anything is published, so a failure
+      # stops the release while it can still be retried. The bundle travels as
+      # its own artifact because the PyPI step uploads everything in dist/.
+      - id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Name the bundle for the release
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          mkdir provenance
+          cp "$BUNDLE" "provenance/fiioctl-${GITHUB_REF_NAME#v}.intoto.jsonl"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: provenance
+          path: provenance/
 
   smoke:
     name: install the wheel before publishing it
@@ -106,10 +131,14 @@ jobs:
         with:
           name: dist
           path: dist
-      - name: Create the release with the wheel and sdist attached
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: provenance
+          path: provenance
+      - name: Create the release with the wheel, sdist and provenance attached
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*
+          gh release create "$GITHUB_REF_NAME" dist/* provenance/*
           --verify-tag --generate-notes
           --title "$GITHUB_REF_NAME"

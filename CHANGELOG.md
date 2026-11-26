@@ -18,6 +18,9 @@ on the device while a timestamped read loop watched the command space.
   theme, s/pdif, the voltage and current display and the headphone jack move
   nothing in the command space, so they are device-local. Nothing answers above
   command 50 on this model.
+- Releases carry signed build provenance for the wheel and sdist, attached as
+  `fiioctl-<version>.intoto.jsonl` and checkable with `gh attestation verify`.
+  `SECURITY.md` says how.
 
 ### Fixed
 
