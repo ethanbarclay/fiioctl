@@ -1,0 +1,4 @@
+# The build backend, alongside the dev extras from pyproject.toml. The editable
+# install runs without build isolation, so setuptools has to be hash-checked
+# here rather than fetched on the side.
+setuptools>=77

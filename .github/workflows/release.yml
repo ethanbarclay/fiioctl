@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: python -m pip install build twine
+      - run: python -m pip install --require-hashes -r requirements/build.txt
 
       # Two ways to publish the wrong thing, both unfixable after upload: a
       # tag cut from the wrong commit, and a ref that is not a tag at all.
@@ -50,7 +50,9 @@ jobs:
           echo "tag=$tag packaged=$packaged"
           test "$tag" = "$packaged"
 
-      - run: python -m build
+      # Without isolation the backend comes from the hashed lock above, rather
+      # than being fetched unchecked into a throwaway environment.
+      - run: python -m build --no-isolation
       - name: Metadata renders on PyPI
         run: python -m twine check dist/*
 
@@ -96,7 +98,7 @@ jobs:
       - name: Install and run
         shell: bash
         run: |
-          python -m pip install "$(ls dist/*.whl)"
+          python -m pip install dist/*.whl
           fiioctl --version
           fiioctl schema | python -c "import json,sys; json.load(sys.stdin)"
 

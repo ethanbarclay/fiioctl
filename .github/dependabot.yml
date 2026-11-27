@@ -16,11 +16,11 @@ updates:
       prefix: ":arrow_up:"
     labels: [dependencies]
 
-  # Dependencies here are floors (`hidapi>=0.15`) rather than pins, so there is
-  # usually nothing for this to do - it will mostly act on the dev extras, and
-  # on anything pinned later.
+  # pyproject.toml only sets floors (`hidapi>=0.15`), so the work here is the
+  # hashed locks CI installs from in requirements/. Bumping a pin there
+  # regenerates its hashes.
   - package-ecosystem: pip
-    directory: "/"
+    directories: ["/", "/requirements"]
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
