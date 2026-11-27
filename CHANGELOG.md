@@ -4,10 +4,11 @@ Notable changes per release. Versions follow [semantic versioning](https://semve
 with the caveat that a 0.x line can break its CLI surface between minor versions
 if a protocol finding demands it.
 
-## Unreleased
+## 0.3.0 - 2026-11-26
 
 The KA15's settings menu, mapped against firmware 1.1.6 by changing each item
-on the device while a timestamped read loop watched the command space.
+on the device while a timestamped read loop watched the command space, and the
+first release with signed build provenance.
 
 ### Added
 
@@ -61,6 +62,18 @@ on the device while a timestamped read loop watched the command space.
   so these writes are reported as applied and never verified.
 - `language` is documented as accepting only its two values. The firmware
   rejects anything above 1, so there was nothing more to find there.
+
+### Verified on hardware
+
+A FiiO KA15 on firmware 1.1.6: every new setting checked against the device's
+own menu, `uac-mode` written across a re-enumeration with the value holding,
+and the refusals for `volume-switch` and an out-of-range `vol-mode`. No model
+other than the KA15 has been tried.
+
+### Not verified
+
+Whether the KA15's screen-equipped siblings use the same command ids, and the
+provenance attestation, which is first produced by this release.
 
 ## 0.2.1 - 2026-11-08
 
