@@ -3,12 +3,29 @@
 ## Reporting a vulnerability
 
 Report privately through GitHub: **Security → Advisories → Report a
-vulnerability** on this repository. That opens a draft advisory only the
-maintainer can see. Please do not open a public issue for anything that looks
-exploitable.
+vulnerability** on this repository, or go straight to
+<https://github.com/ethanbarclay/fiioctl/security/advisories/new>. That opens a
+draft advisory only the maintainer can see. Please do not open a public issue
+for anything that looks exploitable.
 
 Include the `fiioctl` version, your OS, and what the tool was talking to (a
 device, FiiO's servers, or neither). A reply should come within a week.
+
+Disclosure is coordinated through that advisory. Once a fix is released, the
+advisory is published with credit to the reporter unless they would rather not
+be named. If a fix is taking longer than 90 days, the reporter is free to
+disclose.
+
+## Verifying a release
+
+Releases after 0.2.1 carry a signed build provenance attestation for every
+wheel and sdist, stored with GitHub and attached to the release as
+`fiioctl-<version>.intoto.jsonl`. To check that a file was built by this
+repository's release workflow:
+
+```
+gh attestation verify fiioctl-<version>-py3-none-any.whl --repo ethanbarclay/fiioctl
+```
 
 ## Supported versions
 

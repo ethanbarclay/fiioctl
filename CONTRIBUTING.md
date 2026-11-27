@@ -157,6 +157,11 @@ and should stay that way: the HID layer and FiiO's services are stubbed out, so 
 can run them anywhere. `--dry-run` shows the packets a command would send without
 a device attached, and `--trace` shows real traffic.
 
+CI installs from hashed locks in `requirements/` rather than from the extras, so
+a change to `[dev]` in `pyproject.toml` needs `requirements/dev.txt` regenerated
+in the same commit. Each lock's header has the `uv pip compile` command that
+made it.
+
 Adding a decoded command or a device is covered in
 [Extending it](README.md#extending-it).
 

@@ -1,0 +1,5 @@
+# Tools that build and check the release artifacts. setuptools is here because
+# the build runs without isolation, so the backend is hash-checked too.
+build
+twine
+setuptools>=77
